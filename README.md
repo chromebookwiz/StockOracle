@@ -1,10 +1,10 @@
 # StockOracle
 
-StockOracle is a same-day stock mover ranking app built for intraday idea generation. It fetches market and intraday data, engineers bar-level and prior-day features, trains ensemble models on return-to-close targets, overlays live sentiment and options signals, and evaluates the output with a cost-aware backtest aligned to the current intraday decision slot.
+StockOracle is a same-day stock mover ranking app built for intraday idea generation. It fetches Yahoo market and intraday data through direct HTTP APIs, engineers bar-level and prior-day features, trains ensemble models on return-to-close targets, overlays live sentiment and options signals, and evaluates the output with a cost-aware backtest aligned to the current intraday decision slot.
 
 ## What it does
 
-- Pulls OHLCV data with `yfinance`
+- Pulls OHLCV data from Yahoo Finance chart APIs
 - Pulls recent intraday bars and trains on same-bar-slot examples from prior sessions
 - Builds momentum, volatility, volume, benchmark-relative, prior-day context, intraday bar state, and earnings-timing features
 - Pulls live news sentiment and options chain structure for score overlays

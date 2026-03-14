@@ -5,9 +5,9 @@ from math import isnan
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 
 from .runtime import cached_call
+from .yahoo_api import fetch_options_chain, fetch_quote_summary, fetch_search
 
 
 POSITIVE_WORDS = {
@@ -89,31 +89,20 @@ def _sentiment_score(text: str) -> float:
     return (positive_hits - negative_hits) / max(len(words), 1)
 
 
-def _extract_earnings_dates(ticker: yf.Ticker) -> list[pd.Timestamp]:
+def _extract_earnings_dates(symbol: str) -> list[pd.Timestamp]:
     dates: list[pd.Timestamp] = []
 
     try:
-        earnings_frame = ticker.get_earnings_dates(limit=8)
+        payload = fetch_quote_summary(symbol, ["calendarEvents"])
     except Exception:
-        earnings_frame = pd.DataFrame()
+        payload = {}
 
-    if isinstance(earnings_frame, pd.DataFrame) and not earnings_frame.empty:
-        if isinstance(earnings_frame.index, pd.DatetimeIndex):
-            dates.extend(pd.to_datetime(earnings_frame.index).tolist())
-        else:
-            for column in earnings_frame.columns:
-                if "date" in str(column).lower():
-                    parsed = pd.to_datetime(earnings_frame[column], errors="coerce").dropna().tolist()
-                    dates.extend(parsed)
-
-    try:
-        calendar = ticker.calendar
-    except Exception:
-        calendar = None
-
-    if isinstance(calendar, pd.DataFrame) and not calendar.empty:
-        flattened = pd.to_datetime(calendar.values.ravel(), errors="coerce")
-        dates.extend([value for value in flattened if pd.notna(value)])
+    result = ((payload.get("quoteSummary") or {}).get("result") or [None])[0] or {}
+    earnings = ((result.get("calendarEvents") or {}).get("earnings") or {}).get("earningsDate") or []
+    for item in earnings:
+        raw_value = item.get("raw") if isinstance(item, dict) else None
+        if raw_value:
+            dates.append(pd.to_datetime(raw_value, unit="s", utc=True).tz_convert(None).normalize())
 
     unique_dates = sorted({pd.Timestamp(value).normalize() for value in dates if pd.notna(value)})
     return unique_dates
@@ -127,9 +116,9 @@ def fetch_earnings_calendar(symbols: list[str]) -> pd.DataFrame:
                 namespace="earnings-calendar",
                 payload={"symbol": symbol},
                 ttl_seconds=21600,
-                limiter_key="yfinance-ticker",
+                limiter_key="yahoo-quote-summary",
                 minimum_interval_seconds=0.2,
-                loader=lambda symbol=symbol: _extract_earnings_dates(yf.Ticker(symbol)),
+                loader=lambda symbol=symbol: _extract_earnings_dates(symbol),
             )
         except Exception:
             dates = []
@@ -145,7 +134,6 @@ def fetch_live_alternative_data(symbols: list[str]) -> pd.DataFrame:
     records: list[dict[str, object]] = []
 
     for symbol in symbols:
-        ticker = yf.Ticker(symbol)
         record: dict[str, object] = {
             "symbol": symbol,
             "news_sentiment": np.nan,
@@ -164,22 +152,12 @@ def fetch_live_alternative_data(symbols: list[str]) -> pd.DataFrame:
                 namespace="live-news",
                 payload={"symbol": symbol, "count": 12},
                 ttl_seconds=300,
-                limiter_key="yfinance-news",
+                limiter_key="yahoo-search",
                 minimum_interval_seconds=0.25,
-                loader=lambda: ticker.get_news(count=12),
+                loader=lambda symbol=symbol: (fetch_search(symbol, quotes_count=0, news_count=12).get("news") or []),
             )
         except Exception:
-            try:
-                news_items = cached_call(
-                    namespace="live-news-fallback",
-                    payload={"symbol": symbol},
-                    ttl_seconds=300,
-                    limiter_key="yfinance-news",
-                    minimum_interval_seconds=0.25,
-                    loader=lambda: ticker.news,
-                )
-            except Exception:
-                news_items = []
+            news_items = []
 
         scores: list[float] = []
         weights: list[float] = []
@@ -205,9 +183,9 @@ def fetch_live_alternative_data(symbols: list[str]) -> pd.DataFrame:
             namespace="earnings-live",
             payload={"symbol": symbol},
             ttl_seconds=3600,
-            limiter_key="yfinance-ticker",
+            limiter_key="yahoo-quote-summary",
             minimum_interval_seconds=0.2,
-            loader=lambda: _extract_earnings_dates(ticker),
+            loader=lambda symbol=symbol: _extract_earnings_dates(symbol),
         )
         if earnings_dates:
             deltas = [(earnings_date - today).days for earnings_date in earnings_dates]
@@ -218,29 +196,25 @@ def fetch_live_alternative_data(symbols: list[str]) -> pd.DataFrame:
                 record["earnings_proximity"] = float(np.exp(-(nearest / 7.0)))
 
         try:
-            expiries = cached_call(
-                namespace="options-expiries",
+            options_payload = cached_call(
+                namespace="options-chain",
                 payload={"symbol": symbol},
-                ttl_seconds=300,
-                limiter_key="yfinance-options",
+                ttl_seconds=180,
+                limiter_key="yahoo-options",
                 minimum_interval_seconds=0.25,
-                loader=lambda: list(ticker.options or []),
+                loader=lambda symbol=symbol: fetch_options_chain(symbol),
             )
         except Exception:
-            expiries = []
+            options_payload = {}
 
-        if expiries:
+        option_result = ((options_payload.get("optionChain") or {}).get("result") or [None])[0] or {}
+        expiries = option_result.get("expirationDates") or []
+        options = option_result.get("options") or []
+        if expiries and options:
             try:
-                chain = cached_call(
-                    namespace="options-chain",
-                    payload={"symbol": symbol, "expiry": expiries[0]},
-                    ttl_seconds=180,
-                    limiter_key="yfinance-options",
-                    minimum_interval_seconds=0.25,
-                    loader=lambda: ticker.option_chain(expiries[0]),
-                )
-                calls = chain.calls.copy()
-                puts = chain.puts.copy()
+                chain = options[0]
+                calls = pd.DataFrame(chain.get("calls") or [])
+                puts = pd.DataFrame(chain.get("puts") or [])
 
                 total_call_oi = float(calls.get("openInterest", pd.Series(dtype=float)).fillna(0.0).sum())
                 total_put_oi = float(puts.get("openInterest", pd.Series(dtype=float)).fillna(0.0).sum())

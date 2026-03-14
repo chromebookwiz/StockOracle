@@ -3,107 +3,67 @@ from __future__ import annotations
 from datetime import date
 
 import pandas as pd
-import yfinance as yf
 
 from .runtime import cached_call
+from .yahoo_api import fetch_chart
 
 
-PRICE_COLUMNS = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
+def _normalize_chart(symbol: str, payload: dict, time_column: str) -> pd.DataFrame:
+    result = ((payload.get("chart") or {}).get("result") or [None])[0]
+    if not result:
+        return pd.DataFrame(columns=[time_column, "symbol", "open", "high", "low", "close", "adj_close", "volume"])
+
+    timestamps = result.get("timestamp") or []
+    quote = ((result.get("indicators") or {}).get("quote") or [{}])[0]
+    adjclose = ((result.get("indicators") or {}).get("adjclose") or [{}])[0].get("adjclose") or []
+    if not timestamps:
+        return pd.DataFrame(columns=[time_column, "symbol", "open", "high", "low", "close", "adj_close", "volume"])
+
+    frame = pd.DataFrame(
+        {
+            time_column: pd.to_datetime(timestamps, unit="s", utc=True).tz_convert(None),
+            "symbol": symbol.upper(),
+            "open": quote.get("open", []),
+            "high": quote.get("high", []),
+            "low": quote.get("low", []),
+            "close": quote.get("close", []),
+            "adj_close": adjclose if len(adjclose) == len(timestamps) else quote.get("close", []),
+            "volume": quote.get("volume", []),
+        }
+    )
+    return frame
 
 
-def _normalize_download(raw: pd.DataFrame) -> pd.DataFrame:
-    if raw.empty:
-        return pd.DataFrame(columns=["date", "symbol", "open", "high", "low", "close", "adj_close", "volume"])
-
-    if isinstance(raw.columns, pd.MultiIndex):
-        first_level = set(raw.columns.get_level_values(0))
-        if first_level.intersection(PRICE_COLUMNS):
-            try:
-                stacked = raw.stack(level=1, future_stack=True).reset_index()
-            except TypeError:
-                stacked = raw.stack(level=1).reset_index()
-        else:
-            try:
-                stacked = raw.stack(level=0, future_stack=True).reset_index()
-            except TypeError:
-                stacked = raw.stack(level=0).reset_index()
-
-        stacked.columns = [str(column).lower().replace(" ", "_") for column in stacked.columns]
-        if "level_1" in stacked.columns:
-            stacked = stacked.rename(columns={"level_1": "symbol"})
-        if "ticker" in stacked.columns:
-            stacked = stacked.rename(columns={"ticker": "symbol"})
-        if "date" not in stacked.columns:
-            stacked = stacked.rename(columns={stacked.columns[0]: "date"})
-        return stacked
-
-    single_symbol = raw.reset_index().copy()
-    single_symbol.columns = [str(column).lower().replace(" ", "_") for column in single_symbol.columns]
-    single_symbol["symbol"] = "UNKNOWN"
-    return single_symbol
-
-
-def _download_batch(symbols: list[str], start_date: str, end_date: str) -> pd.DataFrame:
-    return cached_call(
+def _download_symbol_daily(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+    payload = cached_call(
         namespace="daily-download",
-        payload={"symbols": symbols, "start": start_date, "end": end_date},
+        payload={"symbol": symbol, "start": start_date, "end": end_date},
         ttl_seconds=900,
-        limiter_key="yfinance-download",
-        minimum_interval_seconds=0.35,
-        loader=lambda: yf.download(
-            tickers=symbols,
-            start=start_date,
-            end=end_date,
-            auto_adjust=False,
-            progress=False,
-            group_by="column",
-            threads=False,
-        ),
+        limiter_key="yahoo-chart",
+        minimum_interval_seconds=0.2,
+        loader=lambda: fetch_chart(symbol, start_date=start_date, end_date=end_date, interval="1d"),
     )
+    return _normalize_chart(symbol, payload, "date")
 
 
-def _download_intraday_batch(symbols: list[str], period_days: int, interval: str) -> pd.DataFrame:
-    return cached_call(
+def _download_symbol_intraday(symbol: str, period_days: int, interval: str) -> pd.DataFrame:
+    payload = cached_call(
         namespace="intraday-download",
-        payload={"symbols": symbols, "period_days": period_days, "interval": interval},
+        payload={"symbol": symbol, "period_days": period_days, "interval": interval},
         ttl_seconds=120,
-        limiter_key="yfinance-download",
-        minimum_interval_seconds=0.35,
-        loader=lambda: yf.download(
-            tickers=symbols,
-            period=f"{period_days}d",
-            interval=interval,
-            prepost=True,
-            auto_adjust=False,
-            progress=False,
-            group_by="column",
-            threads=False,
-        ),
+        limiter_key="yahoo-chart",
+        minimum_interval_seconds=0.2,
+        loader=lambda: fetch_chart(symbol, period_days=period_days, interval=interval, prepost=True),
     )
+    return _normalize_chart(symbol, payload, "timestamp")
 
 
 def download_market_data(symbols: list[str], start_date: str, end_date: str | None = None) -> pd.DataFrame:
     resolved_end = end_date or date.today().isoformat()
-    raw = _download_batch(symbols, start_date, resolved_end)
-    frame = _normalize_download(raw)
-    frame["date"] = pd.to_datetime(frame["date"])
+    frames = [_download_symbol_daily(symbol, start_date, resolved_end) for symbol in symbols]
+    frame = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["date", "symbol", "open", "high", "low", "close", "adj_close", "volume"])
+    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
     frame["symbol"] = frame["symbol"].astype(str).str.upper()
-
-    expected_symbols = {symbol.upper() for symbol in symbols}
-    available_symbols = set(frame["symbol"].unique())
-    missing_symbols = sorted(expected_symbols - available_symbols)
-
-    if missing_symbols:
-        recovered_frames: list[pd.DataFrame] = [frame]
-        for symbol in missing_symbols:
-            retry_raw = _download_batch([symbol], start_date, resolved_end)
-            retry_frame = _normalize_download(retry_raw)
-            if retry_frame.empty:
-                continue
-            retry_frame["date"] = pd.to_datetime(retry_frame["date"])
-            retry_frame["symbol"] = symbol
-            recovered_frames.append(retry_frame)
-        frame = pd.concat(recovered_frames, ignore_index=True)
 
     required = {
         "open": 0.0,
@@ -117,9 +77,6 @@ def download_market_data(symbols: list[str], start_date: str, end_date: str | No
         if column not in frame.columns:
             frame[column] = default_value
 
-    if (frame["symbol"] == "UNKNOWN").all() and len(symbols) == 1:
-        frame["symbol"] = symbols[0].upper()
-
     frame = frame[["date", "symbol", "open", "high", "low", "close", "adj_close", "volume"]]
     frame = frame.dropna(subset=["date", "close"])
     frame = frame.sort_values(["symbol", "date"]).reset_index(drop=True)
@@ -127,13 +84,11 @@ def download_market_data(symbols: list[str], start_date: str, end_date: str | No
 
 
 def download_intraday_data(symbols: list[str], period_days: int = 7, interval: str = "60m") -> pd.DataFrame:
-    raw = _download_intraday_batch(symbols, period_days=period_days, interval=interval)
-    frame = _normalize_download(raw)
+    frames = [_download_symbol_intraday(symbol, period_days=period_days, interval=interval) for symbol in symbols]
+    frame = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["timestamp", "symbol", "open", "high", "low", "close", "adj_close", "volume"])
     if frame.empty:
         return pd.DataFrame(columns=["timestamp", "symbol", "open", "high", "low", "close", "adj_close", "volume"])
 
-    time_column = "datetime" if "datetime" in frame.columns else "date"
-    frame = frame.rename(columns={time_column: "timestamp"})
     frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="coerce")
     frame["symbol"] = frame["symbol"].astype(str).str.upper()
 
@@ -148,9 +103,6 @@ def download_intraday_data(symbols: list[str], period_days: int = 7, interval: s
     for column, default_value in required.items():
         if column not in frame.columns:
             frame[column] = default_value
-
-    if (frame["symbol"] == "UNKNOWN").all() and len(symbols) == 1:
-        frame["symbol"] = symbols[0].upper()
 
     intraday = frame[["timestamp", "symbol", "open", "high", "low", "close", "adj_close", "volume"]]
     intraday = intraday.dropna(subset=["timestamp", "close"])
