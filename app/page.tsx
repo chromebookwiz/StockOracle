@@ -503,26 +503,6 @@ export default function Home() {
             </article>
           </div>
 
-          <AssistantPanel
-            config={{
-              universe: universeList,
-              discoverGlobalMovers,
-              globalMoversLimit,
-              benchmark,
-              startDate,
-              holdoutDays,
-              topK,
-              intradayPeriodDays,
-              intradayInterval,
-              enableLiveNews: liveNews,
-              enableLiveOptions: liveOptions,
-              enableEarningsFeatures: earningsFeatures,
-              startingCapital,
-              maxNotionalPerTrade,
-              executionMode,
-            }}
-          />
-
           <div className="chart-card">
             <div>
               <p className="eyebrow">Backtest Curve</p>
@@ -642,6 +622,26 @@ export default function Home() {
           </div>
         </section>
       </section>
+      <AssistantPanel
+        config={{
+          universe: universeList,
+          discoverGlobalMovers,
+          globalMoversLimit,
+          operatorAuthenticated: session.authenticated,
+          benchmark,
+          startDate,
+          holdoutDays,
+          topK,
+          intradayPeriodDays,
+          intradayInterval,
+          enableLiveNews: liveNews,
+          enableLiveOptions: liveOptions,
+          enableEarningsFeatures: earningsFeatures,
+          startingCapital,
+          maxNotionalPerTrade,
+          executionMode,
+        }}
+      />
     </main>
   );
 }

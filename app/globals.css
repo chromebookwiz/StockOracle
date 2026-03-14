@@ -276,6 +276,111 @@ body {
   gap: 16px;
 }
 
+.assistant-launcher {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 70;
+  border: 1px solid #ffffff;
+  background: #ffffff;
+  color: #000000;
+  padding: 14px 18px;
+  border-radius: 0;
+  font: inherit;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.assistant-window {
+  position: fixed;
+  z-index: 70;
+  width: min(460px, calc(100vw - 24px));
+  max-height: calc(100vh - 32px);
+  border: 1px solid var(--stroke-strong);
+  background: var(--panel);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.assistant-window-minimized {
+  width: min(380px, calc(100vw - 24px));
+}
+
+.assistant-window-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--stroke);
+  background: #000000;
+  cursor: grab;
+}
+
+.assistant-window-header:active {
+  cursor: grabbing;
+}
+
+.assistant-window-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.assistant-window-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.assistant-window-button {
+  border: 1px solid var(--stroke-strong);
+  background: transparent;
+  color: var(--text);
+  border-radius: 0;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.assistant-window-minibar,
+.assistant-window-body {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px 18px;
+}
+
+.assistant-window-body {
+  overflow: hidden;
+}
+
+.assistant-status-row {
+  display: grid;
+  gap: 10px;
+}
+
+.assistant-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.assistant-scroll {
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.assistant-inline-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .assistant-header,
 .assistant-toolbar {
   display: flex;
@@ -487,6 +592,17 @@ th {
   .assistant-header,
   .assistant-toolbar {
     flex-direction: column;
+  }
+
+  .assistant-window {
+    left: 12px !important;
+    top: 12px !important;
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+  }
+
+  .assistant-quick-actions {
+    grid-template-columns: 1fr;
   }
 
   .assistant-summary-grid {
