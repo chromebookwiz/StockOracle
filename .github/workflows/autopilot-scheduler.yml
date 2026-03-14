@@ -1,0 +1,55 @@
+name: Autopilot Scheduler
+
+on:
+  schedule:
+    - cron: '*/10 19-21 * * 1-5'
+    - cron: '*/5 19-21 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Endpoint to call
+        required: true
+        default: status
+        type: choice
+        options:
+          - run
+          - close
+          - status
+
+jobs:
+  autopilot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Select endpoint
+        id: endpoint
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "path=/api/autopilot/${{ inputs.action }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event.schedule }}" == "*/10 19-21 * * 1-5" ]]; then
+            echo "path=/api/autopilot/run" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=/api/autopilot/close" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Call autopilot endpoint
+        env:
+          APP_BASE_URL: ${{ secrets.STOCKORACLE_APP_URL }}
+          AUTOPILOT_TOKEN: ${{ secrets.STOCKORACLE_AUTOPILOT_TOKEN }}
+          ENDPOINT_PATH: ${{ steps.endpoint.outputs.path }}
+        shell: bash
+        run: |
+          if [ -z "$APP_BASE_URL" ]; then
+            echo "Missing STOCKORACLE_APP_URL secret"
+            exit 1
+          fi
+          if [ -z "$AUTOPILOT_TOKEN" ]; then
+            echo "Missing STOCKORACLE_AUTOPILOT_TOKEN secret"
+            exit 1
+          fi
+
+          echo "Calling ${APP_BASE_URL}${ENDPOINT_PATH}"
+          curl --fail --show-error --silent \
+            -X POST "${APP_BASE_URL}${ENDPOINT_PATH}" \
+            -H "Content-Type: application/json" \
+            -d "{\"autopilotToken\":\"${AUTOPILOT_TOKEN}\",\"force\":false}"

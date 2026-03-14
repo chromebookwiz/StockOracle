@@ -148,10 +148,16 @@ Set these environment variables in Vercel:
 - `STOCKORACLE_AUTOPILOT_UNIVERSE=AAPL,MSFT,NVDA,AMZN,...`
 - `STOCKORACLE_AUTOPILOT_TOP_K=4`
 
+For scheduling on Vercel free plans, use the included GitHub Actions workflow instead of Vercel Cron.
+Set these GitHub repository secrets:
+
+- `STOCKORACLE_APP_URL=https://your-app.vercel.app`
+- `STOCKORACLE_AUTOPILOT_TOKEN=<same token configured on Vercel>`
+
 Behavior:
 
-- Vercel Cron calls `/api/autopilot/run` every 10 minutes on weekdays and the endpoint only executes once inside the New York run window, default `15:45`
-- Vercel Cron calls `/api/autopilot/close` every 5 minutes on weekdays and the endpoint only executes once inside the New York close window, default `15:58`
+- GitHub Actions calls `/api/autopilot/run` every 10 minutes on weekdays and the endpoint only executes once inside the New York run window, default `15:45`
+- GitHub Actions calls `/api/autopilot/close` every 5 minutes on weekdays and the endpoint only executes once inside the New York close window, default `15:58`
 - The autopilot uses persistent global storage, so positions and run history are shared across users and deployments when `STOCKORACLE_REDIS_URL` is configured
 - The daily budget defaults to `$10,000`
 - The controller adapts `top_k` and position concentration based on recent closeout performance, so it can de-risk or concentrate automatically over time
@@ -162,6 +168,7 @@ Recommended deployment notes:
 - Configure `STOCKORACLE_REDIS_URL` so autopilot state survives serverless instance churn
 - If you enable `alpaca`, also set `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, and optionally `ALPACA_BASE_URL`
 - Use a separate secret for `STOCKORACLE_AUTOPILOT_TOKEN` instead of reusing public UI credentials
+- The workflow is in `.github/workflows/autopilot-scheduler.yml` and can also be triggered manually with `workflow_dispatch`
 
 ## Notes
 
