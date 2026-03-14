@@ -32,6 +32,16 @@ type ApiResponse = {
   metrics: Record<string, number | string>;
   featureImportance: FeatureRow[];
   backtestCurve: BacktestRow[];
+  executionPlan: Array<{
+    symbol: string;
+    side: string;
+    quantity: number;
+    notional: number;
+    reference_price: number;
+    predicted_return: number;
+    confidence: number;
+    final_score: number;
+  }>;
 };
 
 const defaultUniverse = [
@@ -96,7 +106,11 @@ export default function Home() {
   const [liveNews, setLiveNews] = useState(true);
   const [liveOptions, setLiveOptions] = useState(true);
   const [earningsFeatures, setEarningsFeatures] = useState(true);
+  const [startingCapital, setStartingCapital] = useState(25000);
+  const [maxNotionalPerTrade, setMaxNotionalPerTrade] = useState(5000);
+  const [positions, setPositions] = useState<Array<{ symbol: string; quantity: number; avgPrice: number }>>([]);
   const [loading, setLoading] = useState(false);
+  const [executing, setExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ApiResponse | null>(null);
 
@@ -120,6 +134,8 @@ export default function Home() {
       intradayInterval,
       enableLiveOptions: liveOptions,
       enableEarningsFeatures: earningsFeatures,
+      startingCapital,
+      maxNotionalPerTrade,
     };
 
     try {
@@ -138,6 +154,45 @@ export default function Home() {
       setData(null);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function executePlan() {
+    setExecuting(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          universe: universe
+            .split(/[,\n]/)
+            .map((symbol) => symbol.trim().toUpperCase())
+            .filter(Boolean),
+          benchmark,
+          startDate,
+          holdoutDays,
+          topK,
+          intradayPeriodDays,
+          intradayInterval,
+          enableLiveNews: liveNews,
+          enableLiveOptions: liveOptions,
+          enableEarningsFeatures: earningsFeatures,
+          startingCapital,
+          maxNotionalPerTrade,
+          executionMode: "paper",
+        }),
+      });
+      const json = (await response.json()) as { positions?: Array<{ symbol: string; quantity: number; avgPrice: number }>; detail?: string };
+      if (!response.ok) {
+        throw new Error(json.detail || "Execution request failed.");
+      }
+      setPositions(json.positions ?? []);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unknown execution error");
+    } finally {
+      setExecuting(false);
     }
   }
 
@@ -229,8 +284,22 @@ export default function Home() {
             </label>
           </div>
 
+          <div className="two-up">
+            <label>
+              Starting Capital
+              <input type="number" value={startingCapital} onChange={(event) => setStartingCapital(Number(event.target.value))} />
+            </label>
+            <label>
+              Max Notional / Trade
+              <input type="number" value={maxNotionalPerTrade} onChange={(event) => setMaxNotionalPerTrade(Number(event.target.value))} />
+            </label>
+          </div>
+
           <button className="primary-button" type="submit" disabled={loading}>
             {loading ? "Running model..." : "Generate movers"}
+          </button>
+          <button className="secondary-button" type="button" disabled={!data || executing} onClick={executePlan}>
+            {executing ? "Submitting paper orders..." : "Submit top picks to paper broker"}
           </button>
           {error ? <p className="error-copy">{error}</p> : null}
         </form>
@@ -317,6 +386,48 @@ export default function Home() {
                 </div>
               ))}
             </div>
+          </div>
+
+          <div className="table-card">
+            <div>
+              <p className="eyebrow">Execution</p>
+              <h2>Paper trade plan</h2>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Side</th>
+                    <th>Qty</th>
+                    <th>Notional</th>
+                    <th>Ref Price</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data?.executionPlan ?? []).map((row) => (
+                    <tr key={`${row.symbol}-${row.side}`}>
+                      <td>{row.symbol}</td>
+                      <td>{row.side}</td>
+                      <td>{number(row.quantity, 0)}</td>
+                      <td>${number(row.notional, 2)}</td>
+                      <td>${number(row.reference_price, 2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {positions.length ? (
+              <div className="positions-block">
+                <p className="eyebrow">Paper Broker Positions</p>
+                {positions.map((position) => (
+                  <div key={position.symbol} className="feature-row">
+                    <span>{position.symbol}</span>
+                    <strong>{`${position.quantity} @ $${number(position.avgPrice, 2)}`}</strong>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         </section>
       </section>

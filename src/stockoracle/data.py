@@ -5,6 +5,8 @@ from datetime import date
 import pandas as pd
 import yfinance as yf
 
+from .runtime import cached_call
+
 
 PRICE_COLUMNS = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
 
@@ -42,27 +44,41 @@ def _normalize_download(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def _download_batch(symbols: list[str], start_date: str, end_date: str) -> pd.DataFrame:
-    return yf.download(
-        tickers=symbols,
-        start=start_date,
-        end=end_date,
-        auto_adjust=False,
-        progress=False,
-        group_by="column",
-        threads=False,
+    return cached_call(
+        namespace="daily-download",
+        payload={"symbols": symbols, "start": start_date, "end": end_date},
+        ttl_seconds=900,
+        limiter_key="yfinance-download",
+        minimum_interval_seconds=0.35,
+        loader=lambda: yf.download(
+            tickers=symbols,
+            start=start_date,
+            end=end_date,
+            auto_adjust=False,
+            progress=False,
+            group_by="column",
+            threads=False,
+        ),
     )
 
 
 def _download_intraday_batch(symbols: list[str], period_days: int, interval: str) -> pd.DataFrame:
-    return yf.download(
-        tickers=symbols,
-        period=f"{period_days}d",
-        interval=interval,
-        prepost=True,
-        auto_adjust=False,
-        progress=False,
-        group_by="column",
-        threads=False,
+    return cached_call(
+        namespace="intraday-download",
+        payload={"symbols": symbols, "period_days": period_days, "interval": interval},
+        ttl_seconds=120,
+        limiter_key="yfinance-download",
+        minimum_interval_seconds=0.35,
+        loader=lambda: yf.download(
+            tickers=symbols,
+            period=f"{period_days}d",
+            interval=interval,
+            prepost=True,
+            auto_adjust=False,
+            progress=False,
+            group_by="column",
+            threads=False,
+        ),
     )
 
 

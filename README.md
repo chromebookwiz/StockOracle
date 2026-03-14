@@ -46,6 +46,22 @@ Vercel will build the Next.js app and expose the Python endpoints:
 - `/api/health`
 - `/api/rank`
 
+Production checklist:
+
+- Confirm `npm run build` passes locally
+- Confirm the Python API smoke test passes: `PYTHONPATH=src python -c "from api.rank import RankingRequest, rank; print(rank(RankingRequest(universe=['AAPL','MSFT','NVDA']))['ranking'][0]['symbol'])"`
+- Set the Vercel framework preset to `Next.js`
+- Keep the repo root as the Vercel root directory
+- Verify Python functions are enabled for `api/*.py`
+- If you want durable paper-trading state across deploys, point `STOCKORACLE_EXECUTION_DIR` to persistent storage instead of ephemeral serverless disk
+- If you want shared cache persistence, point `STOCKORACLE_CACHE_DIR` to persistent storage
+
+Operational notes:
+
+- Yahoo-backed market-data requests are cached and rate-limited in-process to reduce throttling and repeated cold fetches
+- The execution layer supports `paper` mode today through `/api/execute` and `/api/positions`
+- Paper orders are generated from the current top-ranked names with capital and max-notional caps
+
 ## Local web app
 
 Run the frontend locally:
@@ -56,6 +72,18 @@ npm run dev
 ```
 
 The frontend posts ranking requests to `/api/rank`.
+
+## Paper trading
+
+The app includes a paper broker interface for same-day execution workflows.
+
+Endpoints:
+
+- `/api/rank` returns the ranking plus an execution plan
+- `/api/execute` submits the current top picks to the paper broker
+- `/api/positions` returns paper positions and recent orders
+
+The broker layer is defined in `src/stockoracle/execution.py`. The current production implementation is `paper`, with a broker abstraction ready for a live adapter later.
 
 ## Notes
 

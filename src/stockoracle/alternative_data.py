@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+from .runtime import cached_call
+
 
 POSITIVE_WORDS = {
     "beat",
@@ -121,8 +123,14 @@ def fetch_earnings_calendar(symbols: list[str]) -> pd.DataFrame:
     records: list[dict[str, object]] = []
     for symbol in symbols:
         try:
-            ticker = yf.Ticker(symbol)
-            dates = _extract_earnings_dates(ticker)
+            dates = cached_call(
+                namespace="earnings-calendar",
+                payload={"symbol": symbol},
+                ttl_seconds=21600,
+                limiter_key="yfinance-ticker",
+                minimum_interval_seconds=0.2,
+                loader=lambda symbol=symbol: _extract_earnings_dates(yf.Ticker(symbol)),
+            )
         except Exception:
             dates = []
 
@@ -152,10 +160,24 @@ def fetch_live_alternative_data(symbols: list[str]) -> pd.DataFrame:
         }
 
         try:
-            news_items = ticker.get_news(count=12)
+            news_items = cached_call(
+                namespace="live-news",
+                payload={"symbol": symbol, "count": 12},
+                ttl_seconds=300,
+                limiter_key="yfinance-news",
+                minimum_interval_seconds=0.25,
+                loader=lambda: ticker.get_news(count=12),
+            )
         except Exception:
             try:
-                news_items = ticker.news
+                news_items = cached_call(
+                    namespace="live-news-fallback",
+                    payload={"symbol": symbol},
+                    ttl_seconds=300,
+                    limiter_key="yfinance-news",
+                    minimum_interval_seconds=0.25,
+                    loader=lambda: ticker.news,
+                )
             except Exception:
                 news_items = []
 
@@ -179,7 +201,14 @@ def fetch_live_alternative_data(symbols: list[str]) -> pd.DataFrame:
             record["news_buzz"] = float(sum(weights))
             record["recent_news_count"] = float(len(weights))
 
-        earnings_dates = _extract_earnings_dates(ticker)
+        earnings_dates = cached_call(
+            namespace="earnings-live",
+            payload={"symbol": symbol},
+            ttl_seconds=3600,
+            limiter_key="yfinance-ticker",
+            minimum_interval_seconds=0.2,
+            loader=lambda: _extract_earnings_dates(ticker),
+        )
         if earnings_dates:
             deltas = [(earnings_date - today).days for earnings_date in earnings_dates]
             future_deltas = [delta for delta in deltas if delta >= 0]
@@ -189,13 +218,27 @@ def fetch_live_alternative_data(symbols: list[str]) -> pd.DataFrame:
                 record["earnings_proximity"] = float(np.exp(-(nearest / 7.0)))
 
         try:
-            expiries = list(ticker.options or [])
+            expiries = cached_call(
+                namespace="options-expiries",
+                payload={"symbol": symbol},
+                ttl_seconds=300,
+                limiter_key="yfinance-options",
+                minimum_interval_seconds=0.25,
+                loader=lambda: list(ticker.options or []),
+            )
         except Exception:
             expiries = []
 
         if expiries:
             try:
-                chain = ticker.option_chain(expiries[0])
+                chain = cached_call(
+                    namespace="options-chain",
+                    payload={"symbol": symbol, "expiry": expiries[0]},
+                    ttl_seconds=180,
+                    limiter_key="yfinance-options",
+                    minimum_interval_seconds=0.25,
+                    loader=lambda: ticker.option_chain(expiries[0]),
+                )
                 calls = chain.calls.copy()
                 puts = chain.puts.copy()
 

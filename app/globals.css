@@ -176,7 +176,23 @@ body {
   cursor: pointer;
 }
 
+.secondary-button {
+  border: 1px solid rgba(80, 213, 255, 0.35);
+  border-radius: 16px;
+  padding: 14px 18px;
+  background: rgba(80, 213, 255, 0.08);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
 .primary-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.secondary-button:disabled {
   opacity: 0.65;
   cursor: wait;
 }
@@ -264,6 +280,12 @@ th {
   padding: 12px 14px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.03);
+}
+
+.positions-block {
+  margin-top: 18px;
+  display: grid;
+  gap: 10px;
 }
 
 @media (max-width: 1080px) {

@@ -20,6 +20,9 @@ class AppConfig:
     enable_live_news: bool = True
     enable_live_options: bool = True
     enable_earnings_features: bool = True
+    starting_capital: float = 25_000.0
+    execution_mode: str = "paper"
+    max_notional_per_trade: float = 5_000.0
     transaction_cost_bps: float = 5.0
     slippage_bps: float = 5.0
     max_position_weight: float = 0.20

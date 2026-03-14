@@ -67,6 +67,8 @@ with st.sidebar:
     intraday_interval = st.selectbox("Intraday interval", options=["5m", "15m", "30m", "60m"], index=1)
     transaction_cost_bps = st.slider("Transaction cost (bps)", min_value=0, max_value=25, value=5)
     slippage_bps = st.slider("Slippage (bps)", min_value=0, max_value=25, value=5)
+    starting_capital = st.number_input("Starting capital", min_value=1000.0, value=25000.0, step=1000.0)
+    max_notional_per_trade = st.number_input("Max notional / trade", min_value=100.0, value=5000.0, step=100.0)
     enable_live_news = st.toggle("Use live news sentiment", value=True)
     enable_live_options = st.toggle("Use live options flow", value=True)
     enable_earnings_features = st.toggle("Use earnings timing", value=True)
@@ -87,6 +89,8 @@ if run_button:
         enable_live_news=enable_live_news,
         enable_live_options=enable_live_options,
         enable_earnings_features=enable_earnings_features,
+        starting_capital=starting_capital,
+        max_notional_per_trade=max_notional_per_trade,
         transaction_cost_bps=transaction_cost_bps,
         slippage_bps=slippage_bps,
     )
@@ -166,9 +170,15 @@ if run_button:
                 st.plotly_chart(equity_chart, use_container_width=True)
 
             st.subheader("Top names")
-                top_symbols = output.ranking.head(top_k)[["symbol", "predicted_return", "confidence", "final_score", "minutes_to_close"]].copy()
+            top_symbols = output.ranking.head(top_k)[["symbol", "predicted_return", "confidence", "final_score", "minutes_to_close"]].copy()
             top_symbols["predicted_return"] = top_symbols["predicted_return"].map(lambda value: f"{value:.2%}")
             top_symbols["confidence"] = top_symbols["confidence"].map(lambda value: f"{value:.2%}")
             st.table(top_symbols)
+
+            st.subheader("Execution plan")
+            if output.execution_plan.empty:
+                st.info("No orders were generated from the current ranking.")
+            else:
+                st.dataframe(output.execution_plan, use_container_width=True, hide_index=True)
 else:
-            st.info("Choose a universe and run the ranking to generate the current same-day mover list into the close.")
+    st.info("Choose a universe and run the ranking to generate the current same-day mover list into the close.")

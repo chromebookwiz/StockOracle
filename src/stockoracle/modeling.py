@@ -35,6 +35,7 @@ class ModelOutput:
     feature_importance: pd.DataFrame
     holdout_predictions: pd.DataFrame
     backtest_curve: pd.DataFrame
+    execution_plan: pd.DataFrame
 
 
 class EnsembleRanker:

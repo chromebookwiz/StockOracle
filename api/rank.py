@@ -16,6 +16,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from stockoracle import AppConfig, run_stock_oracle  # noqa: E402
+from stockoracle.execution import ExecutionPlan, get_broker  # noqa: E402
 
 
 app = FastAPI(title="StockOracle API")
@@ -33,8 +34,15 @@ class RankingRequest(BaseModel):
     enableLiveNews: bool = True
     enableLiveOptions: bool = True
     enableEarningsFeatures: bool = True
+    startingCapital: float = 25_000.0
+    executionMode: str = "paper"
+    maxNotionalPerTrade: float = 5_000.0
     transactionCostBps: float = 5.0
     slippageBps: float = 5.0
+
+
+class ExecuteRequest(RankingRequest):
+    submitTopK: int | None = None
 
 
 def _records(frame: pd.DataFrame, limit: int | None = None) -> list[dict[str, Any]]:
@@ -77,6 +85,9 @@ def rank(payload: RankingRequest) -> dict[str, Any]:
                 enable_live_news=payload.enableLiveNews,
                 enable_live_options=payload.enableLiveOptions,
                 enable_earnings_features=payload.enableEarningsFeatures,
+                starting_capital=payload.startingCapital,
+                execution_mode=payload.executionMode,
+                max_notional_per_trade=payload.maxNotionalPerTrade,
                 transaction_cost_bps=payload.transactionCostBps,
                 slippage_bps=payload.slippageBps,
             )
@@ -90,4 +101,24 @@ def rank(payload: RankingRequest) -> dict[str, Any]:
         "featureImportance": _records(output.feature_importance, limit=20),
         "holdoutPredictions": _records(output.holdout_predictions, limit=250),
         "backtestCurve": _records(output.backtest_curve, limit=250),
+        "executionPlan": _records(output.execution_plan, limit=25),
     }
+
+
+@app.post("/api/execute")
+def execute(payload: ExecuteRequest) -> dict[str, Any]:
+    ranked = rank(payload)
+    execution_plan = pd.DataFrame(ranked["executionPlan"])
+    if execution_plan.empty:
+        raise HTTPException(status_code=400, detail="No execution plan was generated for the current ranking.")
+
+    broker = get_broker(payload.executionMode)
+    orders = [ExecutionPlan(**row) for row in execution_plan.head(payload.submitTopK or payload.topK).to_dict(orient="records")]
+    result = broker.place_orders(orders)
+    return {"submitted": len(result["orders"]), "orders": result["orders"], "positions": result["positions"]}
+
+
+@app.get("/api/positions")
+def positions(mode: str = "paper") -> dict[str, Any]:
+    broker = get_broker(mode)
+    return {"positions": broker.positions(), "orders": broker.orders()[:25]}

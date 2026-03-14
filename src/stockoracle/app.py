@@ -6,6 +6,7 @@ from .alternative_data import fetch_earnings_calendar, fetch_live_alternative_da
 from .backtest import run_backtest
 from .config import AppConfig
 from .data import download_intraday_data, download_market_data
+from .execution import build_execution_plan, execution_plan_frame
 from .features import build_feature_frame
 from .modeling import EnsembleRanker, ModelOutput, evaluate_holdout
 from .same_day import SAME_DAY_FEATURE_COLUMNS, build_same_day_dataset, select_current_same_day_frame
@@ -141,10 +142,20 @@ def run_stock_oracle(config: AppConfig) -> ModelOutput:
     metrics["signal_bar_index"] = float(signal_bar_index)
     metrics["median_minutes_to_close"] = float(current_frame["minutes_to_close"].median())
     feature_importance = ranker.feature_importance(active_feature_columns)
+    execution_plan = execution_plan_frame(
+        build_execution_plan(
+            ranking=current_ranking,
+            top_k=config.top_k,
+            capital=config.starting_capital,
+            max_position_weight=config.max_position_weight,
+            max_notional_per_trade=config.max_notional_per_trade,
+        )
+    )
     return ModelOutput(
         ranking=current_ranking,
         metrics=metrics,
         feature_importance=feature_importance,
         holdout_predictions=holdout_predictions,
         backtest_curve=backtest_curve,
+        execution_plan=execution_plan,
     )
