@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type RankingRow = {
   symbol: string;
@@ -48,6 +48,12 @@ type ApiResponse = {
     topK: number;
     confirmationToken: string | null;
   };
+};
+
+type SessionState = {
+  configured: boolean;
+  authenticated: boolean;
+  username: string | null;
 };
 
 const defaultUniverse = [
@@ -113,17 +119,52 @@ export default function Home() {
   const [liveOptions, setLiveOptions] = useState(true);
   const [earningsFeatures, setEarningsFeatures] = useState(true);
   const [executionMode, setExecutionMode] = useState("paper");
-  const [executionAuthToken, setExecutionAuthToken] = useState("");
   const [confirmExecution, setConfirmExecution] = useState(false);
   const [startingCapital, setStartingCapital] = useState(25000);
   const [maxNotionalPerTrade, setMaxNotionalPerTrade] = useState(5000);
   const [positions, setPositions] = useState<Array<{ symbol: string; quantity: number; avgPrice: number }>>([]);
+  const [session, setSession] = useState<SessionState>({ configured: false, authenticated: false, username: null });
+  const [loginUsername, setLoginUsername] = useState("operator");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [authLoading, setAuthLoading] = useState(true);
   const [loading, setLoading] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ApiResponse | null>(null);
 
   const sparkline = useMemo(() => sparklinePath(data?.backtestCurve ?? []), [data]);
+
+  async function refreshSession() {
+    const response = await fetch("/api/auth/session", { cache: "no-store" });
+    const json = (await response.json()) as SessionState;
+    setSession(json);
+    setAuthLoading(false);
+    return json;
+  }
+
+  async function refreshPositions(mode: string) {
+    const response = await fetch(`/api/trade/positions?mode=${encodeURIComponent(mode)}`, { cache: "no-store" });
+    if (!response.ok) {
+      setPositions([]);
+      return;
+    }
+    const json = (await response.json()) as { positions?: Array<{ symbol: string; quantity: number; avgPrice: number }> };
+    setPositions(json.positions ?? []);
+  }
+
+  useEffect(() => {
+    void refreshSession().then((current) => {
+      if (current.authenticated) {
+        void refreshPositions(executionMode);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (session.authenticated) {
+      void refreshPositions(executionMode);
+    }
+  }, [executionMode, session.authenticated]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -173,7 +214,7 @@ export default function Home() {
     setError(null);
 
     try {
-      const response = await fetch("/api/execute", {
+      const response = await fetch("/api/trade/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -193,7 +234,6 @@ export default function Home() {
           executionMode,
           startingCapital,
           maxNotionalPerTrade,
-          executionAuthToken,
           confirmExecution,
           confirmationToken: data?.executionConfirmation?.confirmationToken,
         }),
@@ -208,6 +248,38 @@ export default function Home() {
     } finally {
       setExecuting(false);
     }
+  }
+
+  async function login() {
+    setError(null);
+    setAuthLoading(true);
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginUsername, password: loginPassword }),
+      });
+      const json = (await response.json()) as { detail?: string };
+      if (!response.ok) {
+        throw new Error(json.detail || "Login failed.");
+      }
+      const current = await refreshSession();
+      if (current.authenticated) {
+        await refreshPositions(executionMode);
+      }
+      setLoginPassword("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unknown auth error");
+      setAuthLoading(false);
+    }
+  }
+
+  async function logout() {
+    setError(null);
+    await fetch("/api/auth/logout", { method: "POST" });
+    setSession({ configured: session.configured, authenticated: false, username: null });
+    setPositions([]);
+    setConfirmExecution(false);
   }
 
   return (
@@ -316,15 +388,34 @@ export default function Home() {
             </label>
           </div>
 
-          <label>
-            Execution Auth Token
-            <input
-              type="password"
-              value={executionAuthToken}
-              onChange={(event) => setExecutionAuthToken(event.target.value)}
-              placeholder="Required when STOCKORACLE_EXECUTION_TOKEN is set"
-            />
-          </label>
+          <div className="auth-card">
+            <p className="eyebrow">Operator Auth</p>
+            {authLoading ? <p className="empty-copy">Checking session...</p> : null}
+            {!authLoading && !session.configured ? <p className="empty-copy">Set STOCKORACLE_OPERATOR_PASSWORD to enable operator login.</p> : null}
+            {!authLoading && session.configured && !session.authenticated ? (
+              <>
+                <label>
+                  Username
+                  <input value={loginUsername} onChange={(event) => setLoginUsername(event.target.value)} />
+                </label>
+                <label>
+                  Password
+                  <input type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} />
+                </label>
+                <button className="secondary-button" type="button" onClick={login}>
+                  Sign in operator
+                </button>
+              </>
+            ) : null}
+            {!authLoading && session.authenticated ? (
+              <>
+                <p className="empty-copy">Signed in as {session.username}.</p>
+                <button className="secondary-button" type="button" onClick={logout}>
+                  Sign out
+                </button>
+              </>
+            ) : null}
+          </div>
 
           <label className="checkbox-row">
             <input type="checkbox" checked={confirmExecution} onChange={(event) => setConfirmExecution(event.target.checked)} />
@@ -334,7 +425,7 @@ export default function Home() {
           <button className="primary-button" type="submit" disabled={loading}>
             {loading ? "Running model..." : "Generate movers"}
           </button>
-          <button className="secondary-button" type="button" disabled={!data || executing || !confirmExecution} onClick={executePlan}>
+          <button className="secondary-button" type="button" disabled={!data || executing || !confirmExecution || !session.authenticated} onClick={executePlan}>
             {executing ? "Submitting orders..." : `Submit top picks to ${executionMode}`}
           </button>
           {error ? <p className="error-copy">{error}</p> : null}

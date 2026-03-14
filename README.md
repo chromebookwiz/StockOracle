@@ -64,6 +64,9 @@ Operational notes:
 
 Environment variables:
 
+- `STOCKORACLE_OPERATOR_USERNAME`: operator username for the web login, defaults to `operator`
+- `STOCKORACLE_OPERATOR_PASSWORD`: operator password for protected trade actions
+- `STOCKORACLE_SESSION_SECRET`: secret used to sign web login sessions
 - `STOCKORACLE_EXECUTION_TOKEN`: required token for `/api/execute` when set
 - `STOCKORACLE_CONFIRMATION_SECRET`: secret used to sign confirmation tokens for execution plans
 - `STOCKORACLE_REDIS_URL`: enables durable Redis-backed storage for cache and paper broker state
@@ -96,6 +99,7 @@ The broker layer is defined in `src/stockoracle/execution.py`. The current imple
 
 Execution safety:
 
+- The web UI now requires operator login before it can submit or inspect authenticated trade routes
 - `/api/execute` can be guarded with `STOCKORACLE_EXECUTION_TOKEN`
 - The rank response returns a confirmation token derived from the current execution plan
 - `/api/execute` requires an explicit confirmation flag plus a matching confirmation token, so stale plans are rejected

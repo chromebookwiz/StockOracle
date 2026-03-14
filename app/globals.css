@@ -176,6 +176,15 @@ body {
   width: auto;
 }
 
+.auth-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(159, 178, 203, 0.14);
+  background: rgba(255, 255, 255, 0.03);
+}
+
 .primary-button {
   border: none;
   border-radius: 16px;
