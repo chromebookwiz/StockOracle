@@ -3,6 +3,7 @@ node_modules/
 .next/
 .vercel/
 .stockoracle/
+uv.lock
 src/*.egg-info/
 __pycache__/
 *.pyc
