@@ -170,6 +170,10 @@ class AlpacaBroker:
         response = self._request("GET", "/v2/orders", params={"status": "all", "limit": 25, "direction": "desc"})
         return response if isinstance(response, list) else []
 
+    def close_all_positions(self) -> list[dict]:
+        response = self._request("DELETE", "/v2/positions")
+        return response if isinstance(response, list) else []
+
 
 def build_execution_plan(
     ranking: pd.DataFrame,
@@ -209,6 +213,59 @@ def build_execution_plan(
 
 def execution_plan_frame(plans: list[ExecutionPlan]) -> pd.DataFrame:
     return pd.DataFrame([asdict(plan) for plan in plans])
+
+
+def flatten_positions(mode: str, price_lookup: dict[str, float] | None = None) -> dict:
+    normalized = mode.lower().strip()
+    if normalized == "paper":
+        broker = PaperBroker()
+        positions = broker.positions()
+        flatten_orders: list[ExecutionPlan] = []
+        realized_pnl = 0.0
+        for position in positions:
+            quantity = int(position.get("quantity", 0) or 0)
+            if quantity == 0:
+                continue
+            symbol = str(position.get("symbol", "")).upper()
+            avg_price = float(position.get("avgPrice", 0.0) or 0.0)
+            close_price = float((price_lookup or {}).get(symbol, avg_price) or avg_price)
+            realized_pnl += quantity * (close_price - avg_price)
+            flatten_orders.append(
+                ExecutionPlan(
+                    symbol=symbol,
+                    side="sell" if quantity > 0 else "buy",
+                    quantity=abs(quantity),
+                    notional=abs(quantity) * close_price,
+                    reference_price=close_price,
+                    predicted_return=0.0,
+                    confidence=1.0,
+                    final_score=0.0,
+                )
+            )
+
+        result = broker.place_orders(flatten_orders)
+        result["flattened"] = len(flatten_orders)
+        result["realizedPnl"] = realized_pnl
+        return result
+
+    if normalized == "alpaca":
+        broker = AlpacaBroker()
+        existing_positions = broker.positions()
+        close_orders = broker.close_all_positions()
+        realized_pnl = 0.0
+        for position in existing_positions:
+            try:
+                realized_pnl += float(position.get("unrealized_pl", 0.0) or 0.0)
+            except Exception:
+                continue
+        return {
+            "orders": close_orders,
+            "positions": broker.positions(),
+            "flattened": len(existing_positions),
+            "realizedPnl": realized_pnl,
+        }
+
+    raise ValueError(f"Unsupported execution mode: {mode}")
 
 
 def requires_execution_auth() -> bool:

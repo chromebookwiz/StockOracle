@@ -99,6 +99,9 @@ Endpoints:
 - `/api/rank` returns the ranking plus an execution plan
 - `/api/execute` submits the current top picks to the paper broker
 - `/api/positions` returns paper positions and recent orders
+- `/api/autopilot/run` executes the global daily autopilot cycle
+- `/api/autopilot/close` flattens the global daily autopilot positions near the close
+- `/api/autopilot/status` returns persistent global autopilot state
 
 The broker layer is defined in `src/stockoracle/execution.py`. The current implementations are `paper` and `alpaca`.
 
@@ -108,6 +111,34 @@ Execution safety:
 - `/api/execute` and `/api/positions` fail closed unless `STOCKORACLE_EXECUTION_TOKEN` is configured
 - The rank response returns a confirmation token derived from the current execution plan
 - `/api/execute` requires an explicit confirmation flag plus a matching confirmation token signed with `STOCKORACLE_CONFIRMATION_SECRET`, so stale plans are rejected
+
+## Global autopilot
+
+The app can run a global server-managed trading cycle instead of relying on a browser session.
+
+Set these environment variables in Vercel:
+
+- `STOCKORACLE_AUTOPILOT_ENABLED=true`
+- `STOCKORACLE_AUTOPILOT_MODE=paper` or `alpaca`
+- `STOCKORACLE_AUTOPILOT_DAILY_BUDGET=10000`
+- `STOCKORACLE_AUTOPILOT_TOKEN=<long-random-secret>` or configure `CRON_SECRET`
+- `STOCKORACLE_AUTOPILOT_UNIVERSE=AAPL,MSFT,NVDA,AMZN,...`
+- `STOCKORACLE_AUTOPILOT_TOP_K=4`
+
+Behavior:
+
+- Vercel Cron calls `/api/autopilot/run` every 10 minutes on weekdays and the endpoint only executes once inside the New York run window, default `15:45`
+- Vercel Cron calls `/api/autopilot/close` every 5 minutes on weekdays and the endpoint only executes once inside the New York close window, default `15:58`
+- The autopilot uses persistent global storage, so positions and run history are shared across users and deployments when `STOCKORACLE_REDIS_URL` is configured
+- The daily budget defaults to `$10,000`
+- The controller adapts `top_k` and position concentration based on recent closeout performance, so it can de-risk or concentrate automatically over time
+
+Recommended deployment notes:
+
+- Use `paper` mode first
+- Configure `STOCKORACLE_REDIS_URL` so autopilot state survives serverless instance churn
+- If you enable `alpaca`, also set `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, and optionally `ALPACA_BASE_URL`
+- Use a separate secret for `STOCKORACLE_AUTOPILOT_TOKEN` instead of reusing public UI credentials
 
 ## Notes
 
