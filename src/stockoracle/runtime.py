@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import pickle
-import tempfile
 import threading
 import time
-from pathlib import Path
 from typing import Any, Callable, TypeVar
+
+from .storage import get_binary_store
 
 
 T = TypeVar("T")
@@ -18,16 +17,6 @@ _RATE_LIMIT_LOCK = threading.Lock()
 _LAST_CALL_BY_KEY: dict[str, float] = {}
 
 
-def cache_directory() -> Path:
-    root = os.getenv("STOCKORACLE_CACHE_DIR")
-    if root:
-        path = Path(root)
-    else:
-        path = Path(tempfile.gettempdir()) / "stockoracle-cache"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 def cache_key(namespace: str, payload: dict[str, Any]) -> str:
     serialized = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     digest = hashlib.sha256(serialized).hexdigest()
@@ -35,23 +24,17 @@ def cache_key(namespace: str, payload: dict[str, Any]) -> str:
 
 
 def load_from_cache(key: str, ttl_seconds: int) -> Any | None:
-    path = cache_directory() / f"{key}.pkl"
-    if not path.exists():
-        return None
-    age_seconds = time.time() - path.stat().st_mtime
-    if age_seconds > ttl_seconds:
+    payload = get_binary_store().get_bytes(f"cache/{key}.pkl", ttl_seconds=ttl_seconds)
+    if payload is None:
         return None
     try:
-        with path.open("rb") as handle:
-            return pickle.load(handle)
+        return pickle.loads(payload)
     except Exception:
         return None
 
 
 def save_to_cache(key: str, value: Any) -> None:
-    path = cache_directory() / f"{key}.pkl"
-    with path.open("wb") as handle:
-        pickle.dump(value, handle)
+    get_binary_store().set_bytes(f"cache/{key}.pkl", pickle.dumps(value))
 
 
 def rate_limit(key: str, minimum_interval_seconds: float) -> None:

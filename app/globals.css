@@ -135,7 +135,8 @@ body {
 }
 
 .control-panel input,
-.control-panel textarea {
+.control-panel textarea,
+.control-panel select {
   width: 100%;
   border: 1px solid rgba(159, 178, 203, 0.18);
   border-radius: 14px;
@@ -163,6 +164,16 @@ body {
 
 .toggle-grid input {
   margin-right: 10px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.checkbox-row input {
+  width: auto;
 }
 
 .primary-button {

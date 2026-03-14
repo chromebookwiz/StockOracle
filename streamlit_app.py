@@ -65,6 +65,7 @@ with st.sidebar:
     top_k = st.slider("Top picks to evaluate", min_value=3, max_value=20, value=10)
     intraday_period_days = st.slider("Intraday lookback (days)", min_value=10, max_value=60, value=45)
     intraday_interval = st.selectbox("Intraday interval", options=["5m", "15m", "30m", "60m"], index=1)
+    execution_mode = st.selectbox("Execution mode", options=["paper", "alpaca"], index=0)
     transaction_cost_bps = st.slider("Transaction cost (bps)", min_value=0, max_value=25, value=5)
     slippage_bps = st.slider("Slippage (bps)", min_value=0, max_value=25, value=5)
     starting_capital = st.number_input("Starting capital", min_value=1000.0, value=25000.0, step=1000.0)
@@ -86,6 +87,7 @@ if run_button:
         top_k=top_k,
         intraday_period_days=intraday_period_days,
         intraday_interval=intraday_interval,
+        execution_mode=execution_mode,
         enable_live_news=enable_live_news,
         enable_live_options=enable_live_options,
         enable_earnings_features=enable_earnings_features,

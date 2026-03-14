@@ -16,7 +16,13 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from stockoracle import AppConfig, run_stock_oracle  # noqa: E402
-from stockoracle.execution import ExecutionPlan, get_broker  # noqa: E402
+from stockoracle.execution import (  # noqa: E402
+    ExecutionPlan,
+    build_confirmation_token,
+    get_broker,
+    requires_execution_auth,
+    validate_execution_auth,
+)
 
 
 app = FastAPI(title="StockOracle API")
@@ -43,6 +49,9 @@ class RankingRequest(BaseModel):
 
 class ExecuteRequest(RankingRequest):
     submitTopK: int | None = None
+    confirmExecution: bool = False
+    confirmationToken: str | None = None
+    executionAuthToken: str | None = None
 
 
 def _records(frame: pd.DataFrame, limit: int | None = None) -> list[dict[str, Any]]:
@@ -95,6 +104,13 @@ def rank(payload: RankingRequest) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    execution_confirmation = {
+        "required": requires_execution_auth(),
+        "mode": payload.executionMode,
+        "topK": payload.topK,
+        "confirmationToken": build_confirmation_token(output.execution_plan.head(payload.topK)) if not output.execution_plan.empty else None,
+    }
+
     return {
         "ranking": _records(output.ranking, limit=25),
         "metrics": output.metrics,
@@ -102,6 +118,7 @@ def rank(payload: RankingRequest) -> dict[str, Any]:
         "holdoutPredictions": _records(output.holdout_predictions, limit=250),
         "backtestCurve": _records(output.backtest_curve, limit=250),
         "executionPlan": _records(output.execution_plan, limit=25),
+        "executionConfirmation": execution_confirmation,
     }
 
 
@@ -112,13 +129,35 @@ def execute(payload: ExecuteRequest) -> dict[str, Any]:
     if execution_plan.empty:
         raise HTTPException(status_code=400, detail="No execution plan was generated for the current ranking.")
 
+    try:
+        validate_execution_auth(payload.executionAuthToken)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    if not payload.confirmExecution:
+        raise HTTPException(status_code=400, detail="Execution confirmation flag is required.")
+
+    expected_confirmation_token = build_confirmation_token(execution_plan.head(payload.submitTopK or payload.topK))
+    if payload.confirmationToken != expected_confirmation_token:
+        raise HTTPException(status_code=400, detail="Execution confirmation token is invalid or stale.")
+
     broker = get_broker(payload.executionMode)
     orders = [ExecutionPlan(**row) for row in execution_plan.head(payload.submitTopK or payload.topK).to_dict(orient="records")]
     result = broker.place_orders(orders)
-    return {"submitted": len(result["orders"]), "orders": result["orders"], "positions": result["positions"]}
+    return {
+        "submitted": len(result["orders"]),
+        "orders": result["orders"],
+        "positions": result["positions"],
+        "mode": payload.executionMode,
+    }
 
 
 @app.get("/api/positions")
-def positions(mode: str = "paper") -> dict[str, Any]:
+def positions(mode: str = "paper", executionAuthToken: str | None = None) -> dict[str, Any]:
+    if mode != "paper" or requires_execution_auth():
+        try:
+            validate_execution_auth(executionAuthToken)
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
     broker = get_broker(mode)
     return {"positions": broker.positions(), "orders": broker.orders()[:25]}

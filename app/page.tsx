@@ -42,6 +42,12 @@ type ApiResponse = {
     confidence: number;
     final_score: number;
   }>;
+  executionConfirmation: {
+    required: boolean;
+    mode: string;
+    topK: number;
+    confirmationToken: string | null;
+  };
 };
 
 const defaultUniverse = [
@@ -106,6 +112,9 @@ export default function Home() {
   const [liveNews, setLiveNews] = useState(true);
   const [liveOptions, setLiveOptions] = useState(true);
   const [earningsFeatures, setEarningsFeatures] = useState(true);
+  const [executionMode, setExecutionMode] = useState("paper");
+  const [executionAuthToken, setExecutionAuthToken] = useState("");
+  const [confirmExecution, setConfirmExecution] = useState(false);
   const [startingCapital, setStartingCapital] = useState(25000);
   const [maxNotionalPerTrade, setMaxNotionalPerTrade] = useState(5000);
   const [positions, setPositions] = useState<Array<{ symbol: string; quantity: number; avgPrice: number }>>([]);
@@ -128,12 +137,14 @@ export default function Home() {
         .filter(Boolean),
       benchmark,
       startDate,
+      holdoutDays,
       topK,
       intradayPeriodDays,
       enableLiveNews: liveNews,
       intradayInterval,
       enableLiveOptions: liveOptions,
       enableEarningsFeatures: earningsFeatures,
+      executionMode,
       startingCapital,
       maxNotionalPerTrade,
     };
@@ -179,9 +190,12 @@ export default function Home() {
           enableLiveNews: liveNews,
           enableLiveOptions: liveOptions,
           enableEarningsFeatures: earningsFeatures,
+          executionMode,
           startingCapital,
           maxNotionalPerTrade,
-          executionMode: "paper",
+          executionAuthToken,
+          confirmExecution,
+          confirmationToken: data?.executionConfirmation?.confirmationToken,
         }),
       });
       const json = (await response.json()) as { positions?: Array<{ symbol: string; quantity: number; avgPrice: number }>; detail?: string };
@@ -286,6 +300,13 @@ export default function Home() {
 
           <div className="two-up">
             <label>
+              Execution Mode
+              <select value={executionMode} onChange={(event) => setExecutionMode(event.target.value)}>
+                <option value="paper">paper</option>
+                <option value="alpaca">alpaca</option>
+              </select>
+            </label>
+            <label>
               Starting Capital
               <input type="number" value={startingCapital} onChange={(event) => setStartingCapital(Number(event.target.value))} />
             </label>
@@ -295,11 +316,26 @@ export default function Home() {
             </label>
           </div>
 
+          <label>
+            Execution Auth Token
+            <input
+              type="password"
+              value={executionAuthToken}
+              onChange={(event) => setExecutionAuthToken(event.target.value)}
+              placeholder="Required when STOCKORACLE_EXECUTION_TOKEN is set"
+            />
+          </label>
+
+          <label className="checkbox-row">
+            <input type="checkbox" checked={confirmExecution} onChange={(event) => setConfirmExecution(event.target.checked)} />
+            I confirm the current execution plan and want to submit these orders.
+          </label>
+
           <button className="primary-button" type="submit" disabled={loading}>
             {loading ? "Running model..." : "Generate movers"}
           </button>
-          <button className="secondary-button" type="button" disabled={!data || executing} onClick={executePlan}>
-            {executing ? "Submitting paper orders..." : "Submit top picks to paper broker"}
+          <button className="secondary-button" type="button" disabled={!data || executing || !confirmExecution} onClick={executePlan}>
+            {executing ? "Submitting orders..." : `Submit top picks to ${executionMode}`}
           </button>
           {error ? <p className="error-copy">{error}</p> : null}
         </form>

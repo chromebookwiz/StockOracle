@@ -59,8 +59,17 @@ Production checklist:
 Operational notes:
 
 - Yahoo-backed market-data requests are cached and rate-limited in-process to reduce throttling and repeated cold fetches
-- The execution layer supports `paper` mode today through `/api/execute` and `/api/positions`
+- The execution layer supports `paper` and `alpaca` modes through `/api/execute` and `/api/positions`
 - Paper orders are generated from the current top-ranked names with capital and max-notional caps
+
+Environment variables:
+
+- `STOCKORACLE_EXECUTION_TOKEN`: required token for `/api/execute` when set
+- `STOCKORACLE_CONFIRMATION_SECRET`: secret used to sign confirmation tokens for execution plans
+- `STOCKORACLE_REDIS_URL`: enables durable Redis-backed storage for cache and paper broker state
+- `ALPACA_API_KEY`: Alpaca key for live execution mode
+- `ALPACA_SECRET_KEY`: Alpaca secret for live execution mode
+- `ALPACA_BASE_URL`: optional Alpaca base URL, defaults to paper trading
 
 ## Local web app
 
@@ -83,7 +92,13 @@ Endpoints:
 - `/api/execute` submits the current top picks to the paper broker
 - `/api/positions` returns paper positions and recent orders
 
-The broker layer is defined in `src/stockoracle/execution.py`. The current production implementation is `paper`, with a broker abstraction ready for a live adapter later.
+The broker layer is defined in `src/stockoracle/execution.py`. The current implementations are `paper` and `alpaca`.
+
+Execution safety:
+
+- `/api/execute` can be guarded with `STOCKORACLE_EXECUTION_TOKEN`
+- The rank response returns a confirmation token derived from the current execution plan
+- `/api/execute` requires an explicit confirmation flag plus a matching confirmation token, so stale plans are rejected
 
 ## Notes
 
@@ -103,8 +118,11 @@ src/stockoracle/
   backtest.py     Cost-aware portfolio simulation
   config.py       Runtime configuration
   data.py         Market data fetching and normalization
+  execution.py    Paper and Alpaca execution adapters
   features.py     Feature engineering and targets
   modeling.py     Ensemble training, ranking, and evaluation
+  runtime.py      Cache and throttling helpers
+  storage.py      Durable file/Redis storage backends
   universe.py     Default symbol universe
 streamlit_app.py  Streamlit entrypoint
 ```
