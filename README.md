@@ -90,6 +90,29 @@ npm run dev
 
 The frontend posts ranking requests to `/api/rank`.
 
+For LLMs, bots, or external parsers using the Vercel app directly, use the Next endpoint `/api/predictions`.
+
+Examples:
+
+```bash
+curl "https://your-app.vercel.app/api/predictions?symbols=AAPL,MSFT,NVDA&topK=3"
+```
+
+```bash
+curl -X POST "https://your-app.vercel.app/api/predictions" \
+  -H "Content-Type: application/json" \
+  -d '{"universe":["AAPL","MSFT","NVDA"],"topK":3,"intradayInterval":"15m"}'
+```
+
+The response is parser-friendly JSON with:
+
+- `generatedAt`
+- `request`
+- `summary`
+- `predictions`
+- `metrics`
+- `executionPlan`
+
 ## Paper trading
 
 The app includes a paper broker interface for same-day execution workflows.
