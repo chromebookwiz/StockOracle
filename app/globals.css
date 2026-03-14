@@ -223,7 +223,14 @@ body {
 
 .primary-button:hover:not(:disabled),
 .secondary-button:hover:not(:disabled) {
-  filter: invert(1);
+  background: #1a1a1a;
+  color: #ffffff;
+  border-color: #ffffff;
+}
+
+.primary-button:hover:not(:disabled) {
+  background: #dcdcdc;
+  color: #000000;
 }
 
 .primary-button:disabled {
@@ -345,6 +352,11 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   cursor: pointer;
+}
+
+.assistant-window-button:hover {
+  background: #1a1a1a;
+  border-color: #ffffff;
 }
 
 .assistant-window-minibar,

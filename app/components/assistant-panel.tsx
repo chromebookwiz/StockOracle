@@ -79,16 +79,23 @@ type WebLLMEngine = {
       create: (request: Record<string, unknown>) => Promise<any>;
     };
   };
+  setInitProgressCallback?: (callback: (report: { progress?: number; text?: string }) => void) => void;
+  reload?: (modelId: string | string[]) => Promise<void>;
   unload?: () => Promise<void>;
 };
 
 
-const DEFAULT_WEBLLM_MODEL = process.env.NEXT_PUBLIC_WEBLLM_MODEL || "Qwen3-8B-q4f32_1-MLC";
+const DEFAULT_WEBLLM_MODEL = process.env.NEXT_PUBLIC_WEBLLM_MODEL || "Qwen3-4B-q4f32_1-MLC";
 
 const MODEL_OPTIONS = [
   { id: "Qwen3-8B-q4f32_1-MLC", label: "Qwen3 8B q4f32" },
   { id: "Qwen3-4B-q4f32_1-MLC", label: "Qwen3 4B q4f32" },
   { id: "Qwen3-1.7B-q4f32_1-MLC", label: "Qwen3 1.7B q4f32" },
+];
+
+const FALLBACK_MODEL_ORDER = [
+  "Qwen3-4B-q4f32_1-MLC",
+  "Qwen3-1.7B-q4f32_1-MLC",
 ];
 
 const WINDOW_WIDTH = 460;
@@ -221,6 +228,7 @@ export function AssistantPanel({ config }: { config: AssistantConfig }) {
   const [modelReady, setModelReady] = useState(false);
   const [modelProgress, setModelProgress] = useState("Idle");
   const [assistantActivity, setAssistantActivity] = useState("Idle");
+  const [loadedModelId, setLoadedModelId] = useState<string | null>(null);
   const [lastPredictions, setLastPredictions] = useState<PredictionsResponse | null>(null);
   const [lastGlobalMovers, setLastGlobalMovers] = useState<MoversResponse | null>(null);
   const [lastPositions, setLastPositions] = useState<PositionsResponse | null>(null);
@@ -279,28 +287,79 @@ export function AssistantPanel({ config }: { config: AssistantConfig }) {
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (engineRef.current?.unload) {
+        void engineRef.current.unload();
+      }
+    };
+  }, []);
+
   async function ensureEngine() {
-    if (engineRef.current) {
-      return engineRef.current;
-    }
     if (browserSupportText) {
       throw new Error(browserSupportText);
     }
 
+    const gpuNavigator = navigator as Navigator & { gpu?: { requestAdapter?: (options?: Record<string, unknown>) => Promise<unknown> } };
+    const adapter = await gpuNavigator.gpu?.requestAdapter?.({ powerPreference: "high-performance" });
+    if (!adapter) {
+      throw new Error("WebGPU is present, but no compatible GPU adapter is available for WebLLM.");
+    }
+
+    if (engineRef.current && loadedModelId === modelId) {
+      return engineRef.current;
+    }
+
     setModelBusy(true);
+    setModelReady(false);
     setModelProgress("Loading WebLLM runtime...");
+    setAssistantError(null);
     try {
       const webllm = await import("@mlc-ai/web-llm");
-      const engine = await webllm.CreateMLCEngine(modelId, {
-        initProgressCallback: (report: { progress?: number; text?: string }) => {
-          const percentValue = typeof report.progress === "number" ? ` ${Math.round(report.progress * 100)}%` : "";
-          setModelProgress(`${report.text || "Loading model..."}${percentValue}`);
-        },
-      });
-      engineRef.current = engine as unknown as WebLLMEngine;
-      setModelReady(true);
-      setModelProgress(`Ready: ${modelId}`);
-      return engineRef.current;
+      const candidateModels = Array.from(new Set([modelId, ...FALLBACK_MODEL_ORDER.filter((candidate) => candidate !== modelId)]));
+      let loadedEngine: WebLLMEngine | null = engineRef.current;
+      let lastError: unknown = null;
+
+      const updateProgress = (report: { progress?: number; text?: string }, candidate: string) => {
+        const percentValue = typeof report.progress === "number" ? ` ${Math.round(report.progress * 100)}%` : "";
+        setModelProgress(`${report.text || "Loading model..."} ${candidate}${percentValue}`.trim());
+      };
+
+      for (const candidate of candidateModels) {
+        try {
+          setModelProgress(`Loading ${candidate}...`);
+          const initProgressCallback = (report: { progress?: number; text?: string }) => updateProgress(report, candidate);
+          if (loadedEngine?.reload) {
+            loadedEngine.setInitProgressCallback?.(initProgressCallback);
+            loadedEngine.reload = loadedEngine.reload.bind(loadedEngine);
+            await loadedEngine.reload(candidate);
+          } else {
+            loadedEngine = await webllm.CreateMLCEngine(candidate, {
+              initProgressCallback,
+            }) as unknown as WebLLMEngine;
+          }
+          engineRef.current = loadedEngine;
+          setLoadedModelId(candidate);
+          if (candidate !== modelId) {
+            setModelId(candidate);
+          }
+          setModelReady(true);
+          setModelProgress(`Ready: ${candidate}`);
+          return loadedEngine;
+        } catch (error) {
+          lastError = error;
+          if (loadedEngine?.unload) {
+            await loadedEngine.unload();
+          }
+          loadedEngine = null;
+          engineRef.current = null;
+          setLoadedModelId(null);
+          setModelReady(false);
+        }
+      }
+
+      const detail = lastError instanceof Error ? lastError.message : "Unknown WebLLM load error.";
+      throw new Error(`WebLLM could not load the selected model. ${detail}`);
     } finally {
       setModelBusy(false);
     }
@@ -536,7 +595,7 @@ export function AssistantPanel({ config }: { config: AssistantConfig }) {
           <div className="assistant-toolbar">
             <label>
               WebLLM model
-              <select value={modelId} onChange={(event) => setModelId(event.target.value)} disabled={modelBusy || assistantBusy || modelReady}>
+              <select value={modelId} onChange={(event) => setModelId(event.target.value)} disabled={modelBusy || assistantBusy}>
                 {MODEL_OPTIONS.map((option) => (
                   <option key={option.id} value={option.id}>
                     {option.label}
@@ -544,8 +603,8 @@ export function AssistantPanel({ config }: { config: AssistantConfig }) {
                 ))}
               </select>
             </label>
-            <button className="secondary-button" type="button" onClick={() => void ensureEngine()} disabled={modelBusy || modelReady || Boolean(browserSupportText)}>
-              {modelBusy ? "Loading model..." : modelReady ? "Model ready" : "Load WebLLM model"}
+                <button className="secondary-button" type="button" onClick={() => void ensureEngine()} disabled={modelBusy || Boolean(browserSupportText)}>
+                  {modelBusy ? "Loading model..." : modelReady && loadedModelId === modelId ? `Model ready: ${loadedModelId}` : loadedModelId ? `Switch to ${modelId}` : "Load WebLLM model"}
             </button>
           </div>
 
