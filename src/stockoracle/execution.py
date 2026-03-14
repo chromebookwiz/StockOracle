@@ -7,6 +7,7 @@ import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
+from hmac import compare_digest
 from typing import Protocol
 from uuid import uuid4
 
@@ -213,16 +214,23 @@ def requires_execution_auth() -> bool:
     return bool(os.getenv("STOCKORACLE_EXECUTION_TOKEN"))
 
 
+def require_execution_auth_configured() -> None:
+    if not os.getenv("STOCKORACLE_EXECUTION_TOKEN"):
+        raise ValueError("STOCKORACLE_EXECUTION_TOKEN must be configured for execution endpoints.")
+
+
 def validate_execution_auth(token: str | None) -> None:
     expected = os.getenv("STOCKORACLE_EXECUTION_TOKEN")
     if not expected:
-        return
-    if not token or token != expected:
+        raise ValueError("STOCKORACLE_EXECUTION_TOKEN must be configured for execution endpoints.")
+    if not token or not compare_digest(token, expected):
         raise ValueError("Execution auth token is missing or invalid.")
 
 
 def build_confirmation_token(execution_plan: pd.DataFrame) -> str:
-    secret = os.getenv("STOCKORACLE_CONFIRMATION_SECRET") or os.getenv("STOCKORACLE_EXECUTION_TOKEN") or "stockoracle-confirm"
+    secret = os.getenv("STOCKORACLE_CONFIRMATION_SECRET")
+    if not secret:
+        raise ValueError("STOCKORACLE_CONFIRMATION_SECRET must be configured for execution confirmation.")
     columns = ["symbol", "side", "quantity", "reference_price"]
     payload = execution_plan.loc[:, [column for column in columns if column in execution_plan.columns]].copy()
     payload["reference_price"] = payload.get("reference_price", pd.Series(dtype=float)).round(4) if "reference_price" in payload.columns else pd.Series(dtype=float)

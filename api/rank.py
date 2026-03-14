@@ -20,6 +20,7 @@ from stockoracle.execution import (  # noqa: E402
     ExecutionPlan,
     build_confirmation_token,
     get_broker,
+    require_execution_auth_configured,
     requires_execution_auth,
     validate_execution_auth,
 )
@@ -124,6 +125,11 @@ def rank(payload: RankingRequest) -> dict[str, Any]:
 
 @app.post("/api/execute")
 def execute(payload: ExecuteRequest) -> dict[str, Any]:
+    try:
+        require_execution_auth_configured()
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     ranked = rank(payload)
     execution_plan = pd.DataFrame(ranked["executionPlan"])
     if execution_plan.empty:
@@ -154,6 +160,11 @@ def execute(payload: ExecuteRequest) -> dict[str, Any]:
 
 @app.get("/api/positions")
 def positions(mode: str = "paper", executionAuthToken: str | None = None) -> dict[str, Any]:
+    try:
+        require_execution_auth_configured()
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     if mode != "paper" or requires_execution_auth():
         try:
             validate_execution_auth(executionAuthToken)

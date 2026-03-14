@@ -22,10 +22,11 @@ export async function POST(request: Request) {
     name: sessionCookieName(),
     value: sessionToken,
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: "strict",
     secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: 60 * 60 * 12,
   });
+  response.headers.set("Cache-Control", "no-store");
   return response;
 }

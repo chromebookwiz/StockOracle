@@ -1,6 +1,5 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
-import { NextRequest } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 
 
@@ -14,7 +13,10 @@ type SessionPayload = {
 
 
 function getSessionSecret(): Uint8Array {
-  const secret = process.env.STOCKORACLE_SESSION_SECRET || process.env.STOCKORACLE_EXECUTION_TOKEN || "stockoracle-session-secret";
+  const secret = process.env.STOCKORACLE_SESSION_SECRET;
+  if (!secret) {
+    throw new Error("STOCKORACLE_SESSION_SECRET must be set when operator auth is enabled.");
+  }
   return new TextEncoder().encode(secret);
 }
 
@@ -94,6 +96,3 @@ export function sessionCookieName(): string {
 }
 
 
-export async function sessionFromRequest(request: NextRequest): Promise<SessionPayload | null> {
-  return readSessionFromToken(request.cookies.get(SESSION_COOKIE_NAME)?.value);
-}

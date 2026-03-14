@@ -10,9 +10,10 @@ export async function POST() {
     value: "",
     path: "/",
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: "strict",
     secure: process.env.NODE_ENV === "production",
     maxAge: 0,
   });
+  response.headers.set("Cache-Control", "no-store");
   return response;
 }

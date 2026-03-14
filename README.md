@@ -53,8 +53,8 @@ Production checklist:
 - Set the Vercel framework preset to `Next.js`
 - Keep the repo root as the Vercel root directory
 - Verify Python functions are enabled for `api/*.py`
-- If you want durable paper-trading state across deploys, point `STOCKORACLE_EXECUTION_DIR` to persistent storage instead of ephemeral serverless disk
-- If you want shared cache persistence, point `STOCKORACLE_CACHE_DIR` to persistent storage
+- Set `STOCKORACLE_SESSION_SECRET`, `STOCKORACLE_EXECUTION_TOKEN`, and `STOCKORACLE_CONFIRMATION_SECRET` in Vercel before enabling authenticated trade flows
+- Use `STOCKORACLE_REDIS_URL` for durable shared storage across serverless instances, or `STOCKORACLE_STORAGE_DIR` only for local disk-backed development
 
 Operational notes:
 
@@ -66,10 +66,11 @@ Environment variables:
 
 - `STOCKORACLE_OPERATOR_USERNAME`: operator username for the web login, defaults to `operator`
 - `STOCKORACLE_OPERATOR_PASSWORD`: operator password for protected trade actions
-- `STOCKORACLE_SESSION_SECRET`: secret used to sign web login sessions
-- `STOCKORACLE_EXECUTION_TOKEN`: required token for `/api/execute` when set
-- `STOCKORACLE_CONFIRMATION_SECRET`: secret used to sign confirmation tokens for execution plans
+- `STOCKORACLE_SESSION_SECRET`: required secret used to sign web login sessions
+- `STOCKORACLE_EXECUTION_TOKEN`: required token for `/api/execute` and `/api/positions`
+- `STOCKORACLE_CONFIRMATION_SECRET`: required secret used to sign confirmation tokens for execution plans
 - `STOCKORACLE_REDIS_URL`: enables durable Redis-backed storage for cache and paper broker state
+- `STOCKORACLE_STORAGE_DIR`: optional local storage root for development when Redis is not used
 - `ALPACA_API_KEY`: Alpaca key for live execution mode
 - `ALPACA_SECRET_KEY`: Alpaca secret for live execution mode
 - `ALPACA_BASE_URL`: optional Alpaca base URL, defaults to paper trading
@@ -100,9 +101,9 @@ The broker layer is defined in `src/stockoracle/execution.py`. The current imple
 Execution safety:
 
 - The web UI now requires operator login before it can submit or inspect authenticated trade routes
-- `/api/execute` can be guarded with `STOCKORACLE_EXECUTION_TOKEN`
+- `/api/execute` and `/api/positions` fail closed unless `STOCKORACLE_EXECUTION_TOKEN` is configured
 - The rank response returns a confirmation token derived from the current execution plan
-- `/api/execute` requires an explicit confirmation flag plus a matching confirmation token, so stale plans are rejected
+- `/api/execute` requires an explicit confirmation flag plus a matching confirmation token signed with `STOCKORACLE_CONFIRMATION_SECRET`, so stale plans are rejected
 
 ## Notes
 

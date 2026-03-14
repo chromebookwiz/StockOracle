@@ -5,9 +5,11 @@ import { currentSession, operatorAuthConfigured } from "../../../../lib/auth";
 
 export async function GET() {
   const session = await currentSession();
-  return NextResponse.json({
+  const response = NextResponse.json({
     configured: operatorAuthConfigured(),
     authenticated: Boolean(session),
     username: session?.username || null,
   });
+  response.headers.set("Cache-Control", "no-store");
+  return response;
 }
