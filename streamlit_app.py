@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
+import sys
 
 import plotly.express as px
 import streamlit as st
+
+
+SRC = Path(__file__).resolve().parent / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 from stockoracle import AppConfig, run_stock_oracle
 from stockoracle.universe import DEFAULT_UNIVERSE

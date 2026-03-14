@@ -27,7 +27,7 @@ streamlit run streamlit_app.py
 ```
 
 For Vercel and Python API deployment, the root `requirements.txt` is intentionally trimmed to runtime-only dependencies so the Lambda bundle stays under the 500 MB ephemeral storage limit.
-The deployment is pinned to Python 3.12 via `runtime.txt` and `pyproject.toml` so Vercel can use broadly available pre-built binary wheels for NumPy, pandas, and scikit-learn.
+The deployment is pinned to Python 3.12 via `runtime.txt`, and the runtime requirements are pinned to versions with broadly available pre-built binary wheels for NumPy, pandas, SciPy, and scikit-learn.
 
 ## Vercel deployment
 
@@ -58,7 +58,7 @@ Production checklist:
 - Keep the repo root as the Vercel root directory
 - Verify Python functions are enabled for `api/*.py`
 - Keep `requirements.txt` limited to API runtime dependencies; use `requirements-local.txt` for the Streamlit research UI
-- Keep Vercel on Python 3.12 to avoid source builds for scientific packages
+- Keep Vercel on Python 3.12 and deploy from `requirements.txt` instead of a `uv.lock`/`pyproject.toml` flow
 - Set `STOCKORACLE_SESSION_SECRET`, `STOCKORACLE_EXECUTION_TOKEN`, and `STOCKORACLE_CONFIRMATION_SECRET` in Vercel before enabling authenticated trade flows
 - Use `STOCKORACLE_REDIS_URL` for durable shared storage across serverless instances, or `STOCKORACLE_STORAGE_DIR` only for local disk-backed development
 
