@@ -59,3 +59,10 @@ def fetch_search(query: str, quotes_count: int = 0, news_count: int = 12) -> dic
 def fetch_options_chain(symbol: str, expiration: int | None = None) -> dict[str, Any]:
     params = {"date": expiration} if expiration is not None else None
     return _get_json(f"https://query1.finance.yahoo.com/v7/finance/options/{symbol}", params=params)
+
+
+def fetch_predefined_screener(scr_id: str, count: int = 25) -> dict[str, Any]:
+    return _get_json(
+        "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved",
+        params={"scrIds": scr_id, "count": count},
+    )

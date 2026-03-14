@@ -94,6 +94,8 @@ The frontend posts ranking requests to `/api/rank`.
 
 For LLMs, bots, or external parsers using the Vercel app directly, use the Next endpoint `/api/predictions`.
 
+You can omit symbols entirely and let StockOracle discover current global movers automatically.
+
 Examples:
 
 ```bash
@@ -106,6 +108,14 @@ curl -X POST "https://your-app.vercel.app/api/predictions" \
   -d '{"universe":["AAPL","MSFT","NVDA"],"topK":3,"intradayInterval":"15m"}'
 ```
 
+```bash
+curl -X POST "https://your-app.vercel.app/api/predictions" \
+  -H "Content-Type: application/json" \
+  -d '{"discoverGlobalMovers":true,"globalMoversLimit":60,"topK":5,"intradayInterval":"15m"}'
+```
+
+To fetch the discovered symbol set directly from the Next app, use `/api/universe/global-movers?limit=60`.
+
 The response is parser-friendly JSON with:
 
 - `generatedAt`
@@ -114,6 +124,17 @@ The response is parser-friendly JSON with:
 - `predictions`
 - `metrics`
 - `executionPlan`
+
+## Browser AI assistant
+
+The main web UI now includes a browser-side WebLLM assistant that uses a Qwen3 model to interpret results and call `/api/predictions` based on the user's interests.
+
+Notes:
+
+- It runs fully in the browser and requires WebGPU support
+- The default packaged model is `Qwen3-8B-q4f32_1-MLC`, which is the closest WebLLM browser build to a Qwen3 9B-class setup
+- You can override the default model id with `NEXT_PUBLIC_WEBLLM_MODEL`
+- The assistant can request a market-wide mover scan by calling `/api/predictions` with `discoverGlobalMovers=true`
 
 ## Paper trading
 
@@ -175,6 +196,7 @@ Recommended deployment notes:
 ## Notes
 
 - The default universe is a liquid large-cap watchlist. You can replace it in the UI.
+- The UI can also switch into a global mover discovery mode that sources liquid names from Yahoo predefined market screeners.
 - The model ranks symbols by expected move from the current bar into the close. It does not guarantee returns.
 - Live news and options inputs are current-state overlays, not point-in-time historical archives.
 - Market regimes change. Treat this as a research tool, not a fully automated strategy.
@@ -195,6 +217,6 @@ src/stockoracle/
   modeling.py     Ensemble training, ranking, and evaluation
   runtime.py      Cache and throttling helpers
   storage.py      Durable file/Redis storage backends
-  universe.py     Default symbol universe
+  universe.py     Default symbol universe and global mover discovery
 streamlit_app.py  Streamlit entrypoint
 ```

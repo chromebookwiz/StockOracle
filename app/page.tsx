@@ -2,6 +2,8 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
+import { AssistantPanel } from "./components/assistant-panel";
+
 type RankingRow = {
   symbol: string;
   signal_side: string;
@@ -115,6 +117,8 @@ function sparklinePath(points: BacktestRow[]): string {
 
 export default function Home() {
   const [universe, setUniverse] = useState(defaultUniverse);
+  const [discoverGlobalMovers, setDiscoverGlobalMovers] = useState(false);
+  const [globalMoversLimit, setGlobalMoversLimit] = useState(60);
   const [benchmark, setBenchmark] = useState("SPY");
   const [startDate, setStartDate] = useState("2021-01-01");
   const [holdoutDays, setHoldoutDays] = useState(45);
@@ -139,6 +143,14 @@ export default function Home() {
   const [data, setData] = useState<ApiResponse | null>(null);
 
   const sparkline = useMemo(() => sparklinePath(data?.backtestCurve ?? []), [data]);
+  const universeList = useMemo(
+    () =>
+      universe
+        .split(/[,\n]/)
+        .map((symbol) => symbol.trim().toUpperCase())
+        .filter(Boolean),
+    [universe],
+  );
 
   async function refreshSession() {
     const response = await fetch("/api/auth/session", { cache: "no-store" });
@@ -178,10 +190,14 @@ export default function Home() {
     setError(null);
 
     const payload = {
-      universe: universe
-        .split(/[,\n]/)
-        .map((symbol) => symbol.trim().toUpperCase())
-        .filter(Boolean),
+      universe: discoverGlobalMovers
+        ? []
+        : universe
+            .split(/[,\n]/)
+            .map((symbol) => symbol.trim().toUpperCase())
+            .filter(Boolean),
+      discoverGlobalMovers,
+      globalMoversLimit,
       benchmark,
       startDate,
       holdoutDays,
@@ -224,10 +240,14 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          universe: universe
-            .split(/[,\n]/)
-            .map((symbol) => symbol.trim().toUpperCase())
-            .filter(Boolean),
+          universe: discoverGlobalMovers
+            ? []
+            : universe
+                .split(/[,\n]/)
+                .map((symbol) => symbol.trim().toUpperCase())
+                .filter(Boolean),
+          discoverGlobalMovers,
+          globalMoversLimit,
           benchmark,
           startDate,
           holdoutDays,
@@ -309,15 +329,29 @@ export default function Home() {
 
       <section className="grid-layout">
         <form className="control-panel" onSubmit={onSubmit}>
+          <div className="toggle-grid">
+            <label>
+              <input type="checkbox" checked={discoverGlobalMovers} onChange={(event) => setDiscoverGlobalMovers(event.target.checked)} />
+              Discover top movers globally
+            </label>
+          </div>
+
           <label>
-            Universe
-            <textarea value={universe} onChange={(event) => setUniverse(event.target.value)} rows={8} />
+            {discoverGlobalMovers ? "Manual Universe Override" : "Universe"}
+            <textarea value={universe} onChange={(event) => setUniverse(event.target.value)} rows={8} disabled={discoverGlobalMovers} />
           </label>
+
+          {discoverGlobalMovers ? <p className="empty-copy">StockOracle will discover liquid global movers automatically from live Yahoo market screeners, then rank them for same-day opportunity.</p> : null}
 
           <div className="two-up">
             <label>
               Benchmark
               <input value={benchmark} onChange={(event) => setBenchmark(event.target.value.toUpperCase())} />
+            </label>
+            <label>
+              Global mover pool
+              <input type="range" min="20" max="120" step="10" value={globalMoversLimit} onChange={(event) => setGlobalMoversLimit(Number(event.target.value))} disabled={!discoverGlobalMovers} />
+              <span>{globalMoversLimit}</span>
             </label>
             <label>
               Start Date
@@ -468,6 +502,26 @@ export default function Home() {
               <strong>{percent((data?.metrics.directional_accuracy as number | undefined) ?? undefined)}</strong>
             </article>
           </div>
+
+          <AssistantPanel
+            config={{
+              universe: universeList,
+              discoverGlobalMovers,
+              globalMoversLimit,
+              benchmark,
+              startDate,
+              holdoutDays,
+              topK,
+              intradayPeriodDays,
+              intradayInterval,
+              enableLiveNews: liveNews,
+              enableLiveOptions: liveOptions,
+              enableEarningsFeatures: earningsFeatures,
+              startingCapital,
+              maxNotionalPerTrade,
+              executionMode,
+            }}
+          />
 
           <div className="chart-card">
             <div>

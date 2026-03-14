@@ -27,6 +27,7 @@ from stockoracle.execution import (  # noqa: E402
     requires_execution_auth,
     validate_execution_auth,
 )
+from stockoracle.universe import GLOBAL_SCREENER_IDS, discover_global_movers  # noqa: E402
 
 
 app = FastAPI(title="StockOracle API")
@@ -34,6 +35,8 @@ app = FastAPI(title="StockOracle API")
 
 class RankingRequest(BaseModel):
     universe: list[str] = Field(default_factory=list)
+    discoverGlobalMovers: bool = False
+    globalMoversLimit: int = 60
     benchmark: str = "SPY"
     startDate: str = "2021-01-01"
     holdoutDays: int = 45
@@ -81,13 +84,15 @@ def health() -> dict[str, str]:
 @app.post("/api/rank")
 def rank(payload: RankingRequest) -> dict[str, Any]:
     universe = payload.universe or []
-    if not universe:
-        raise HTTPException(status_code=400, detail="Universe must contain at least one symbol.")
+    if not universe and not payload.discoverGlobalMovers:
+        universe = discover_global_movers(limit=payload.globalMoversLimit)
 
     try:
         output = run_stock_oracle(
             AppConfig(
                 universe=universe,
+                discover_global_movers=payload.discoverGlobalMovers or not bool(payload.universe),
+                global_movers_limit=payload.globalMoversLimit,
                 benchmark=payload.benchmark.strip().upper() or "SPY",
                 start_date=payload.startDate,
                 holdout_days=payload.holdoutDays,
@@ -128,6 +133,18 @@ def rank(payload: RankingRequest) -> dict[str, Any]:
         "backtestCurve": _records(output.backtest_curve, limit=250),
         "executionPlan": _records(output.execution_plan, limit=25),
         "executionConfirmation": execution_confirmation,
+    }
+
+
+@app.get("/api/universe/global-movers")
+def global_movers(limit: int = 60) -> dict[str, Any]:
+    bounded_limit = max(10, min(limit, 120))
+    symbols = discover_global_movers(limit=bounded_limit)
+    return {
+        "symbols": symbols,
+        "count": len(symbols),
+        "source": "yahoo-predefined-screeners",
+        "screeners": GLOBAL_SCREENER_IDS,
     }
 
 

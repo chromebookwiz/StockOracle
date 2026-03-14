@@ -1,29 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
 
-const DEFAULT_UNIVERSE = [
-  "AAPL",
-  "MSFT",
-  "NVDA",
-  "AMZN",
-  "META",
-  "GOOGL",
-  "TSLA",
-  "AMD",
-  "AVGO",
-  "PLTR",
-  "CRWD",
-  "ANET",
-  "UBER",
-  "JPM",
-  "LLY",
-  "XOM",
-];
-
-
 type PredictionInput = {
   universe?: string[] | string;
   symbols?: string[] | string;
+  discoverGlobalMovers?: boolean | string;
+  globalMoversLimit?: number | string;
   benchmark?: string;
   startDate?: string;
   holdoutDays?: number | string;
@@ -47,7 +29,7 @@ function parseUniverse(value: string[] | string | undefined): string[] {
   if (typeof value === "string") {
     return value.split(/[\n,]/).map((symbol) => symbol.trim().toUpperCase()).filter(Boolean);
   }
-  return DEFAULT_UNIVERSE;
+  return [];
 }
 
 
@@ -83,8 +65,12 @@ function parseNumber(value: unknown, fallback: number): number {
 
 
 function buildPayload(input: PredictionInput): Record<string, unknown> {
+  const universe = parseUniverse(input.universe ?? input.symbols);
+  const discoverGlobalMovers = parseBoolean(input.discoverGlobalMovers, universe.length === 0);
   return {
-    universe: parseUniverse(input.universe ?? input.symbols),
+    universe,
+    discoverGlobalMovers,
+    globalMoversLimit: parseNumber(input.globalMoversLimit, 60),
     benchmark: (input.benchmark || "SPY").trim().toUpperCase(),
     startDate: input.startDate || "2021-01-01",
     holdoutDays: parseNumber(input.holdoutDays, 45),
@@ -106,6 +92,8 @@ function buildGetPayload(request: NextRequest): Record<string, unknown> {
   const params = request.nextUrl.searchParams;
   return buildPayload({
     symbols: params.get("symbols") || params.get("universe") || undefined,
+    discoverGlobalMovers: params.get("discoverGlobalMovers") || undefined,
+    globalMoversLimit: params.get("globalMoversLimit") || undefined,
     benchmark: params.get("benchmark") || undefined,
     startDate: params.get("startDate") || undefined,
     holdoutDays: params.get("holdoutDays") || undefined,
@@ -147,6 +135,7 @@ function parserFriendlyResponse(rankResponse: Record<string, unknown>, payload: 
   const timestamp = typeof (metrics as Record<string, unknown>).latest_ranking_timestamp === "string"
     ? (metrics as Record<string, string>).latest_ranking_timestamp
     : new Date().toISOString();
+  const discoveredUniverse = Boolean(payload.discoverGlobalMovers) || (Array.isArray(payload.universe) && payload.universe.length === 0);
 
   return {
     ok: true,
@@ -160,6 +149,7 @@ function parserFriendlyResponse(rankResponse: Record<string, unknown>, payload: 
       directionalAccuracy: (metrics as Record<string, unknown>).directional_accuracy ?? null,
       signalBarIndex: (metrics as Record<string, unknown>).signal_bar_index ?? null,
       minutesToClose: (metrics as Record<string, unknown>).median_minutes_to_close ?? null,
+      discoveredUniverse,
     },
     predictions,
     metrics,

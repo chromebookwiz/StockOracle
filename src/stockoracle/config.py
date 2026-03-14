@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .universe import DEFAULT_UNIVERSE
+from .universe import DEFAULT_UNIVERSE, discover_global_movers
 
 
 @dataclass(slots=True)
@@ -27,9 +27,13 @@ class AppConfig:
     slippage_bps: float = 5.0
     max_position_weight: float = 0.20
     random_state: int = 42
+    discover_global_movers: bool = False
+    global_movers_limit: int = 60
 
     def normalized_universe(self) -> list[str]:
         ordered = [symbol.strip().upper() for symbol in self.universe if symbol.strip()]
+        if self.discover_global_movers or not ordered:
+            ordered = discover_global_movers(limit=self.global_movers_limit)
         deduped = list(dict.fromkeys(ordered))
         if self.benchmark not in deduped:
             deduped.append(self.benchmark)
