@@ -1,0 +1,17 @@
+.venv/
+node_modules/
+.next/
+.vercel/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+dist/
+build/
+*.log
+.DS_Store
+Thumbs.db

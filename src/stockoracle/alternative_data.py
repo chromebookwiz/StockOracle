@@ -1,0 +1,218 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from math import isnan
+
+import numpy as np
+import pandas as pd
+import yfinance as yf
+
+
+POSITIVE_WORDS = {
+    "beat",
+    "breakout",
+    "bullish",
+    "expands",
+    "growth",
+    "guidance",
+    "higher",
+    "launch",
+    "momentum",
+    "outperform",
+    "rally",
+    "record",
+    "surge",
+    "upgrade",
+}
+
+NEGATIVE_WORDS = {
+    "cuts",
+    "delay",
+    "downgrade",
+    "fall",
+    "fraud",
+    "investigation",
+    "lawsuit",
+    "lower",
+    "miss",
+    "plunge",
+    "recall",
+    "risk",
+    "slowdown",
+    "weak",
+}
+
+
+def _extract_nested_text(item: dict, *paths: tuple[str, ...]) -> str:
+    for path in paths:
+        current = item
+        for segment in path:
+            if not isinstance(current, dict) or segment not in current:
+                current = None
+                break
+            current = current[segment]
+        if isinstance(current, str) and current.strip():
+            return current.strip()
+    return ""
+
+
+def _parse_published_at(item: dict) -> datetime | None:
+    candidates = [
+        item.get("providerPublishTime"),
+        item.get("published_at"),
+        item.get("pubDate"),
+        item.get("published"),
+        item.get("content", {}).get("pubDate") if isinstance(item.get("content"), dict) else None,
+    ]
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        if isinstance(candidate, (int, float)) and not isnan(candidate):
+            return datetime.fromtimestamp(candidate, tz=timezone.utc)
+        if isinstance(candidate, str):
+            normalized = candidate.replace("Z", "+00:00")
+            try:
+                return datetime.fromisoformat(normalized)
+            except ValueError:
+                continue
+    return None
+
+
+def _sentiment_score(text: str) -> float:
+    words = [token.strip(".,:;!?()[]{}\"'").lower() for token in text.split() if token.strip()]
+    if not words:
+        return 0.0
+    positive_hits = sum(word in POSITIVE_WORDS for word in words)
+    negative_hits = sum(word in NEGATIVE_WORDS for word in words)
+    return (positive_hits - negative_hits) / max(len(words), 1)
+
+
+def _extract_earnings_dates(ticker: yf.Ticker) -> list[pd.Timestamp]:
+    dates: list[pd.Timestamp] = []
+
+    try:
+        earnings_frame = ticker.get_earnings_dates(limit=8)
+    except Exception:
+        earnings_frame = pd.DataFrame()
+
+    if isinstance(earnings_frame, pd.DataFrame) and not earnings_frame.empty:
+        if isinstance(earnings_frame.index, pd.DatetimeIndex):
+            dates.extend(pd.to_datetime(earnings_frame.index).tolist())
+        else:
+            for column in earnings_frame.columns:
+                if "date" in str(column).lower():
+                    parsed = pd.to_datetime(earnings_frame[column], errors="coerce").dropna().tolist()
+                    dates.extend(parsed)
+
+    try:
+        calendar = ticker.calendar
+    except Exception:
+        calendar = None
+
+    if isinstance(calendar, pd.DataFrame) and not calendar.empty:
+        flattened = pd.to_datetime(calendar.values.ravel(), errors="coerce")
+        dates.extend([value for value in flattened if pd.notna(value)])
+
+    unique_dates = sorted({pd.Timestamp(value).normalize() for value in dates if pd.notna(value)})
+    return unique_dates
+
+
+def fetch_earnings_calendar(symbols: list[str]) -> pd.DataFrame:
+    records: list[dict[str, object]] = []
+    for symbol in symbols:
+        try:
+            ticker = yf.Ticker(symbol)
+            dates = _extract_earnings_dates(ticker)
+        except Exception:
+            dates = []
+
+        for earnings_date in dates:
+            records.append({"symbol": symbol, "earnings_date": earnings_date})
+
+    return pd.DataFrame(records, columns=["symbol", "earnings_date"])
+
+
+def fetch_live_alternative_data(symbols: list[str]) -> pd.DataFrame:
+    today = pd.Timestamp.utcnow().normalize()
+    records: list[dict[str, object]] = []
+
+    for symbol in symbols:
+        ticker = yf.Ticker(symbol)
+        record: dict[str, object] = {
+            "symbol": symbol,
+            "news_sentiment": np.nan,
+            "news_buzz": np.nan,
+            "recent_news_count": np.nan,
+            "days_to_earnings": np.nan,
+            "earnings_proximity": np.nan,
+            "options_put_call_oi": np.nan,
+            "options_call_put_volume": np.nan,
+            "options_iv_skew": np.nan,
+            "options_open_interest_total": np.nan,
+        }
+
+        try:
+            news_items = ticker.get_news(count=12)
+        except Exception:
+            try:
+                news_items = ticker.news
+            except Exception:
+                news_items = []
+
+        scores: list[float] = []
+        weights: list[float] = []
+        for item in news_items or []:
+            title = _extract_nested_text(item, ("title",), ("content", "title"))
+            summary = _extract_nested_text(item, ("summary",), ("content", "summary"), ("content", "description"))
+            published_at = _parse_published_at(item)
+            age_days = 3.0
+            if published_at is not None:
+                age_delta = pd.Timestamp.now(tz=timezone.utc) - pd.Timestamp(published_at)
+                age_days = max(age_delta.total_seconds() / 86400, 0.0)
+            weight = 1 / (1 + age_days)
+            weights.append(weight)
+            scores.append(_sentiment_score(f"{title} {summary}"))
+
+        if weights:
+            weighted = np.average(scores, weights=weights)
+            record["news_sentiment"] = float(weighted)
+            record["news_buzz"] = float(sum(weights))
+            record["recent_news_count"] = float(len(weights))
+
+        earnings_dates = _extract_earnings_dates(ticker)
+        if earnings_dates:
+            deltas = [(earnings_date - today).days for earnings_date in earnings_dates]
+            future_deltas = [delta for delta in deltas if delta >= 0]
+            if future_deltas:
+                nearest = min(future_deltas)
+                record["days_to_earnings"] = float(nearest)
+                record["earnings_proximity"] = float(np.exp(-(nearest / 7.0)))
+
+        try:
+            expiries = list(ticker.options or [])
+        except Exception:
+            expiries = []
+
+        if expiries:
+            try:
+                chain = ticker.option_chain(expiries[0])
+                calls = chain.calls.copy()
+                puts = chain.puts.copy()
+
+                total_call_oi = float(calls.get("openInterest", pd.Series(dtype=float)).fillna(0.0).sum())
+                total_put_oi = float(puts.get("openInterest", pd.Series(dtype=float)).fillna(0.0).sum())
+                total_call_volume = float(calls.get("volume", pd.Series(dtype=float)).fillna(0.0).sum())
+                total_put_volume = float(puts.get("volume", pd.Series(dtype=float)).fillna(0.0).sum())
+                call_iv = calls.get("impliedVolatility", pd.Series(dtype=float)).dropna()
+                put_iv = puts.get("impliedVolatility", pd.Series(dtype=float)).dropna()
+
+                record["options_put_call_oi"] = total_put_oi / max(total_call_oi, 1.0)
+                record["options_call_put_volume"] = total_call_volume / max(total_put_volume, 1.0)
+                record["options_iv_skew"] = float(call_iv.median() - put_iv.median()) if not call_iv.empty and not put_iv.empty else np.nan
+                record["options_open_interest_total"] = total_call_oi + total_put_oi
+            except Exception:
+                pass
+
+        records.append(record)
+
+    return pd.DataFrame(records)

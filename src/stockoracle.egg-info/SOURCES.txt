@@ -1,0 +1,14 @@
+README.md
+pyproject.toml
+src/stockoracle/__init__.py
+src/stockoracle/app.py
+src/stockoracle/config.py
+src/stockoracle/data.py
+src/stockoracle/features.py
+src/stockoracle/modeling.py
+src/stockoracle/universe.py
+src/stockoracle.egg-info/PKG-INFO
+src/stockoracle.egg-info/SOURCES.txt
+src/stockoracle.egg-info/dependency_links.txt
+src/stockoracle.egg-info/requires.txt
+src/stockoracle.egg-info/top_level.txt
