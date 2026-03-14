@@ -178,7 +178,8 @@ def build_execution_plan(
     max_position_weight: float,
     max_notional_per_trade: float,
 ) -> list[ExecutionPlan]:
-    selected = ranking.head(top_k).copy()
+    ordering = ranking.sort_values(["opportunity_score", "confidence"], ascending=[False, False]) if "opportunity_score" in ranking.columns else ranking
+    selected = ordering.head(top_k).copy()
     if selected.empty:
         return []
 
@@ -194,7 +195,7 @@ def build_execution_plan(
         plans.append(
             ExecutionPlan(
                 symbol=str(row["symbol"]),
-                side="buy" if float(row.get("predicted_return", 0.0) or 0.0) >= 0 else "sell",
+                side="buy" if str(row.get("signal_side", "long")) == "long" else "sell",
                 quantity=quantity,
                 notional=quantity * price,
                 reference_price=price,
@@ -219,6 +220,15 @@ def require_execution_auth_configured() -> None:
         raise ValueError("STOCKORACLE_EXECUTION_TOKEN must be configured for execution endpoints.")
 
 
+def confirmation_secret_configured() -> bool:
+    return bool(os.getenv("STOCKORACLE_CONFIRMATION_SECRET"))
+
+
+def require_confirmation_secret_configured() -> None:
+    if not confirmation_secret_configured():
+        raise ValueError("STOCKORACLE_CONFIRMATION_SECRET must be configured for execution confirmation.")
+
+
 def validate_execution_auth(token: str | None) -> None:
     expected = os.getenv("STOCKORACLE_EXECUTION_TOKEN")
     if not expected:
@@ -228,9 +238,8 @@ def validate_execution_auth(token: str | None) -> None:
 
 
 def build_confirmation_token(execution_plan: pd.DataFrame) -> str:
+    require_confirmation_secret_configured()
     secret = os.getenv("STOCKORACLE_CONFIRMATION_SECRET")
-    if not secret:
-        raise ValueError("STOCKORACLE_CONFIRMATION_SECRET must be configured for execution confirmation.")
     columns = ["symbol", "side", "quantity", "reference_price"]
     payload = execution_plan.loc[:, [column for column in columns if column in execution_plan.columns]].copy()
     payload["reference_price"] = payload.get("reference_price", pd.Series(dtype=float)).round(4) if "reference_price" in payload.columns else pd.Series(dtype=float)

@@ -21,10 +21,17 @@ def run_backtest(
     equity = 1.0
     rows: list[dict[str, object]] = []
 
-    for trade_date, day_frame in holdout_predictions.sort_values(["date", "score"], ascending=[True, False]).groupby("date"):
+    ranking_column = "opportunity_score" if "opportunity_score" in holdout_predictions.columns else "score"
+
+    for trade_date, day_frame in holdout_predictions.sort_values(["date", ranking_column], ascending=[True, False]).groupby("date"):
         selected = day_frame.head(top_k).copy()
         if selected.empty:
             continue
+
+        if "signal_side" in selected.columns:
+            selected["strategy_return"] = np.where(selected["signal_side"] == "short", -selected["target_return"], selected["target_return"])
+        else:
+            selected["strategy_return"] = np.where(selected.get("predicted_return", 0.0) < 0, -selected["target_return"], selected["target_return"])
 
         target_weight = min(1 / len(selected), max_position_weight)
         weights = {symbol: target_weight for symbol in selected["symbol"]}
@@ -33,7 +40,7 @@ def run_backtest(
         for symbol in all_symbols:
             turnover += abs(weights.get(symbol, 0.0) - previous_weights.get(symbol, 0.0))
 
-        gross_return = float((selected["target_return"] * target_weight).sum())
+        gross_return = float((selected["strategy_return"] * target_weight).sum())
         net_return = gross_return - turnover * total_cost_rate
         equity *= 1 + net_return
 
@@ -44,7 +51,7 @@ def run_backtest(
                 "net_return": net_return,
                 "turnover": turnover,
                 "equity": equity,
-                "positions": ", ".join(selected["symbol"].tolist()),
+                "positions": ", ".join((selected["symbol"] + ":" + selected.get("signal_side", pd.Series("long", index=selected.index))).tolist()),
             }
         )
         previous_weights = weights

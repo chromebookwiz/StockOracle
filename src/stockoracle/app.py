@@ -8,7 +8,7 @@ from .config import AppConfig
 from .data import download_intraday_data, download_market_data
 from .execution import build_execution_plan, execution_plan_frame
 from .features import build_feature_frame
-from .modeling import EnsembleRanker, ModelOutput, evaluate_holdout
+from .modeling import EnsembleRanker, ModelOutput, build_recency_weights, evaluate_holdout
 from .same_day import SAME_DAY_FEATURE_COLUMNS, build_same_day_dataset, select_current_same_day_frame
 
 
@@ -24,7 +24,9 @@ def _apply_live_overlays(ranking: pd.DataFrame, live_features: pd.DataFrame) -> 
     if live_features.empty:
         ranking["overlay_score"] = 0.0
         ranking["final_score"] = ranking["score"]
-        return ranking.sort_values("final_score", ascending=False).reset_index(drop=True)
+        ranking["signal_side"] = ranking["final_score"].ge(0).map({True: "long", False: "short"})
+        ranking["opportunity_score"] = ranking.get("opportunity_score", ranking["final_score"].abs())
+        return ranking.sort_values(["opportunity_score", "confidence"], ascending=[False, False]).reset_index(drop=True)
 
     merged = ranking.merge(live_features, on="symbol", how="left")
     overlay_score = (
@@ -38,7 +40,9 @@ def _apply_live_overlays(ranking: pd.DataFrame, live_features: pd.DataFrame) -> 
     )
     merged["overlay_score"] = overlay_score
     merged["final_score"] = merged["score"] + overlay_score
-    return merged.sort_values("final_score", ascending=False).reset_index(drop=True)
+    merged["signal_side"] = merged["final_score"].ge(0).map({True: "long", False: "short"})
+    merged["opportunity_score"] = merged["final_score"].abs() + 0.10 * _zscore(merged["confidence"].fillna(0.0))
+    return merged.sort_values(["opportunity_score", "confidence"], ascending=[False, False]).reset_index(drop=True)
 
 
 def run_stock_oracle(config: AppConfig) -> ModelOutput:
@@ -98,7 +102,7 @@ def run_stock_oracle(config: AppConfig) -> ModelOutput:
         raise ValueError("No latest-session rows available for ranking.")
 
     ranker = EnsembleRanker(random_state=config.random_state)
-    ranker.fit(training_frame, active_feature_columns)
+    ranker.fit(training_frame, active_feature_columns, sample_weight=build_recency_weights(training_frame))
     current_ranking = ranker.predict(current_frame, active_feature_columns)
 
     live_features = pd.DataFrame(columns=["symbol"])
@@ -136,11 +140,31 @@ def run_stock_oracle(config: AppConfig) -> ModelOutput:
         max_position_weight=config.max_position_weight,
     )
 
-    metrics.update(backtest_metrics)
+    default_metrics = {
+        "avg_top_k_return": 0.0,
+        "top_k_hit_rate": 0.0,
+        "avg_rank_ic": 0.0,
+        "directional_accuracy": 0.0,
+        "avg_prediction_interval": 0.0,
+        "holdout_days_evaluated": 0.0,
+        "backtest_total_return": 0.0,
+        "backtest_annualized_return": 0.0,
+        "backtest_annualized_volatility": 0.0,
+        "backtest_sharpe": 0.0,
+        "backtest_max_drawdown": 0.0,
+        "backtest_win_rate": 0.0,
+        "backtest_avg_turnover": 0.0,
+    }
+    default_metrics.update(metrics)
+    default_metrics.update(backtest_metrics)
+    metrics = default_metrics
     metrics["latest_ranking_date"] = current_date.isoformat()
     metrics["latest_ranking_timestamp"] = latest_timestamp.isoformat()
     metrics["signal_bar_index"] = float(signal_bar_index)
     metrics["median_minutes_to_close"] = float(current_frame["minutes_to_close"].median())
+    metrics["long_candidates"] = float((current_ranking["signal_side"] == "long").sum())
+    metrics["short_candidates"] = float((current_ranking["signal_side"] == "short").sum())
+    metrics["avg_probability_up"] = float(current_ranking["probability_up"].mean())
     feature_importance = ranker.feature_importance(active_feature_columns)
     execution_plan = execution_plan_frame(
         build_execution_plan(

@@ -105,7 +105,7 @@ if run_button:
         else:
             metrics = output.metrics
             metric_columns = st.columns(4)
-            metric_columns[0].metric("Avg same-slot holdout return", f"{metrics.get('avg_top_k_return', 0.0):.2%}")
+            metric_columns[0].metric("Avg top-k strategy return", f"{metrics.get('avg_top_k_return', 0.0):.2%}")
             metric_columns[1].metric("Top-k hit rate", f"{metrics.get('top_k_hit_rate', 0.0):.2%}")
             metric_columns[2].metric("Avg rank IC", f"{metrics.get('avg_rank_ic', 0.0):.3f}")
             metric_columns[3].metric("Minutes to close", f"{metrics.get('median_minutes_to_close', 0.0):.0f}")
@@ -114,18 +114,32 @@ if run_button:
             backtest_columns[0].metric("Backtest total return", f"{metrics.get('backtest_total_return', 0.0):.2%}")
             backtest_columns[1].metric("Backtest Sharpe", f"{metrics.get('backtest_sharpe', 0.0):.2f}")
             backtest_columns[2].metric("Max drawdown", f"{metrics.get('backtest_max_drawdown', 0.0):.2%}")
-            backtest_columns[3].metric("Signal slot", f"{int(metrics.get('signal_bar_index', 0.0))}")
+            backtest_columns[3].metric("Directional accuracy", f"{metrics.get('directional_accuracy', 0.0):.2%}")
+
+            diagnostics_columns = st.columns(4)
+            diagnostics_columns[0].metric("Signal slot", f"{int(metrics.get('signal_bar_index', 0.0))}")
+            diagnostics_columns[1].metric("Avg probability up", f"{metrics.get('avg_probability_up', 0.0):.2%}")
+            diagnostics_columns[2].metric("Long candidates", f"{int(metrics.get('long_candidates', 0.0))}")
+            diagnostics_columns[3].metric("Short candidates", f"{int(metrics.get('short_candidates', 0.0))}")
 
             st.subheader("Latest ranking")
             ranking = output.ranking.copy()
+            ranking["predicted_return_lower"] = ranking["predicted_return_lower"].map(lambda value: f"{value:.2%}")
+            ranking["predicted_return_upper"] = ranking["predicted_return_upper"].map(lambda value: f"{value:.2%}")
             ranking["predicted_return"] = ranking["predicted_return"].map(lambda value: f"{value:.2%}")
             ranking["predicted_move"] = ranking["predicted_move"].map(lambda value: f"{value:.2%}")
+            ranking["probability_up"] = ranking["probability_up"].map(lambda value: f"{value:.2%}")
             ranking["confidence"] = ranking["confidence"].map(lambda value: f"{value:.2%}")
             ranking["session_return_so_far"] = ranking["session_return_so_far"].map(lambda value: f"{value:.2%}")
             display_columns = [
                 "symbol",
+                "signal_side",
+                "opportunity_score",
                 "predicted_return",
+                "predicted_return_lower",
+                "predicted_return_upper",
                 "predicted_move",
+                "probability_up",
                 "confidence",
                 "model_score",
                 "overlay_score",
@@ -153,11 +167,10 @@ if run_button:
                 else:
                     scatter = px.scatter(
                         holdout,
-                        x="score",
-                        y="target_return",
+                        x="opportunity_score",
+                        y="realized_return",
                         color="symbol",
                         hover_data=["symbol"],
-                        trendline="ols",
                         color_continuous_scale="Turbo",
                     )
                     scatter.update_layout(margin=dict(l=10, r=10, t=20, b=10), height=420)
@@ -172,8 +185,9 @@ if run_button:
                 st.plotly_chart(equity_chart, use_container_width=True)
 
             st.subheader("Top names")
-            top_symbols = output.ranking.head(top_k)[["symbol", "predicted_return", "confidence", "final_score", "minutes_to_close"]].copy()
+            top_symbols = output.ranking.head(top_k)[["symbol", "signal_side", "predicted_return", "probability_up", "confidence", "opportunity_score", "minutes_to_close"]].copy()
             top_symbols["predicted_return"] = top_symbols["predicted_return"].map(lambda value: f"{value:.2%}")
+            top_symbols["probability_up"] = top_symbols["probability_up"].map(lambda value: f"{value:.2%}")
             top_symbols["confidence"] = top_symbols["confidence"].map(lambda value: f"{value:.2%}")
             st.table(top_symbols)
 

@@ -11,15 +11,23 @@ SAME_DAY_FEATURE_COLUMNS = [
     "minutes_from_open",
     "minutes_to_close",
     "session_return_so_far",
+    "session_range_expansion",
     "bar_return_1",
     "bar_return_3",
     "bar_return_6",
+    "bar_return_accel",
     "intraday_volatility_6",
+    "volatility_ratio_6",
+    "trend_strength",
     "intraday_range_pct",
+    "bar_close_location",
     "vwap_gap_live",
+    "vwap_stretch",
     "distance_from_high",
     "distance_from_low",
     "bar_volume_ratio",
+    "benchmark_bar_volume_ratio",
+    "relative_volume_strength_live",
     "benchmark_bar_return_1",
     "benchmark_session_return",
     "benchmark_vwap_gap_live",
@@ -105,18 +113,21 @@ def build_same_day_dataset(
     frame["minutes_from_open"] = (frame["timestamp"] - session_start).dt.total_seconds() / 60
     frame["minutes_to_close"] = (session_end - frame["timestamp"]).dt.total_seconds() / 60
     frame["session_return_so_far"] = frame["trade_price"] / session_open.replace(0.0, np.nan) - 1
+    frame["session_high_so_far"] = session_group["high"].cummax()
+    frame["session_low_so_far"] = session_group["low"].cummin()
+    frame["session_range_expansion"] = frame["session_high_so_far"] / frame["session_low_so_far"].replace(0.0, np.nan) - 1
     frame["bar_return_1"] = session_group["trade_price"].pct_change(1)
     frame["bar_return_3"] = session_group["trade_price"].pct_change(3)
     frame["bar_return_6"] = session_group["trade_price"].pct_change(6)
+    frame["bar_return_accel"] = frame["bar_return_1"] - (frame["bar_return_3"] / 3)
     frame["intraday_volatility_6"] = session_group["bar_return_1"].transform(lambda series: _rolling_group_stat(series, 6, "std"))
     frame["intraday_range_pct"] = (frame["high"] - frame["low"]) / frame["trade_price"].replace(0.0, np.nan)
+    frame["bar_close_location"] = (frame["trade_price"] - frame["low"]) / (frame["high"] - frame["low"]).replace(0.0, np.nan)
 
     frame["cum_volume"] = session_group["volume"].cumsum()
     frame["cum_dollar_volume"] = (frame["trade_price"] * frame["volume"]).groupby([frame["symbol"], frame["date"]]).cumsum()
     frame["vwap_live"] = frame["cum_dollar_volume"] / frame["cum_volume"].replace(0.0, np.nan)
     frame["vwap_gap_live"] = frame["trade_price"] / frame["vwap_live"] - 1
-    frame["session_high_so_far"] = session_group["high"].cummax()
-    frame["session_low_so_far"] = session_group["low"].cummin()
     frame["distance_from_high"] = frame["trade_price"] / frame["session_high_so_far"].replace(0.0, np.nan) - 1
     frame["distance_from_low"] = frame["trade_price"] / frame["session_low_so_far"].replace(0.0, np.nan) - 1
     frame["bar_volume_ratio"] = session_group["volume"].transform(lambda series: series / _rolling_group_stat(series, 6, "mean").replace(0.0, np.nan))
@@ -124,13 +135,14 @@ def build_same_day_dataset(
     benchmark_intraday = (
         frame.loc[
             frame["symbol"] == benchmark_symbol,
-            ["timestamp", "bar_return_1", "session_return_so_far", "vwap_gap_live"],
+            ["timestamp", "bar_return_1", "session_return_so_far", "vwap_gap_live", "bar_volume_ratio"],
         ]
         .rename(
             columns={
                 "bar_return_1": "benchmark_bar_return_1",
                 "session_return_so_far": "benchmark_session_return",
                 "vwap_gap_live": "benchmark_vwap_gap_live",
+                "bar_volume_ratio": "benchmark_bar_volume_ratio",
             }
         )
         .drop_duplicates(subset=["timestamp"])
@@ -138,10 +150,14 @@ def build_same_day_dataset(
     frame = frame.merge(benchmark_intraday, on="timestamp", how="left")
     frame["relative_bar_strength"] = frame["bar_return_1"] - frame["benchmark_bar_return_1"]
     frame["relative_session_strength"] = frame["session_return_so_far"] - frame["benchmark_session_return"]
+    frame["relative_volume_strength_live"] = frame["bar_volume_ratio"] - frame["benchmark_bar_volume_ratio"]
 
     daily_context = daily_feature_frame[["date", "symbol", *DAILY_CONTEXT_COLUMNS]].sort_values(["symbol", "date"]).copy()
     daily_context[DAILY_CONTEXT_COLUMNS] = daily_context.groupby("symbol", sort=False)[DAILY_CONTEXT_COLUMNS].shift(1)
     frame = frame.merge(daily_context, on=["date", "symbol"], how="left")
+    frame["volatility_ratio_6"] = frame["intraday_volatility_6"] / frame["volatility_20"].replace(0.0, np.nan)
+    frame["trend_strength"] = frame["session_return_so_far"] / frame["intraday_volatility_6"].replace(0.0, np.nan)
+    frame["vwap_stretch"] = frame["vwap_gap_live"] - frame["session_return_so_far"]
 
     frame["target_return"] = session_close / frame["trade_price"] - 1
     frame["target_abs_move"] = frame["target_return"].abs()

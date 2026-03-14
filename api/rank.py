@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import Any
+import os
 
 import numpy as np
 import pandas as pd
@@ -19,7 +20,9 @@ from stockoracle import AppConfig, run_stock_oracle  # noqa: E402
 from stockoracle.execution import (  # noqa: E402
     ExecutionPlan,
     build_confirmation_token,
+    confirmation_secret_configured,
     get_broker,
+    require_confirmation_secret_configured,
     require_execution_auth_configured,
     requires_execution_auth,
     validate_execution_auth,
@@ -105,11 +108,16 @@ def rank(payload: RankingRequest) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    confirmation_token: str | None = None
+    if requires_execution_auth() and not output.execution_plan.empty and confirmation_secret_configured():
+        confirmation_token = build_confirmation_token(output.execution_plan.head(payload.topK))
+
     execution_confirmation = {
         "required": requires_execution_auth(),
+        "configured": bool(confirmation_token),
         "mode": payload.executionMode,
         "topK": payload.topK,
-        "confirmationToken": build_confirmation_token(output.execution_plan.head(payload.topK)) if not output.execution_plan.empty else None,
+        "confirmationToken": confirmation_token,
     }
 
     return {
@@ -127,6 +135,7 @@ def rank(payload: RankingRequest) -> dict[str, Any]:
 def execute(payload: ExecuteRequest) -> dict[str, Any]:
     try:
         require_execution_auth_configured()
+        require_confirmation_secret_configured()
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

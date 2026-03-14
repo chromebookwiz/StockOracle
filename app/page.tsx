@@ -4,8 +4,13 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type RankingRow = {
   symbol: string;
+  signal_side: string;
+  opportunity_score: number;
   predicted_return: number;
+  predicted_return_lower: number;
+  predicted_return_upper: number;
   predicted_move: number;
+  probability_up: number;
   confidence: number;
   model_score: number;
   overlay_score: number;
@@ -44,6 +49,7 @@ type ApiResponse = {
   }>;
   executionConfirmation: {
     required: boolean;
+    configured: boolean;
     mode: string;
     topK: number;
     confirmationToken: string | null;
@@ -391,7 +397,7 @@ export default function Home() {
           <div className="auth-card">
             <p className="eyebrow">Operator Auth</p>
             {authLoading ? <p className="empty-copy">Checking session...</p> : null}
-            {!authLoading && !session.configured ? <p className="empty-copy">Set STOCKORACLE_OPERATOR_PASSWORD to enable operator login.</p> : null}
+            {!authLoading && !session.configured ? <p className="empty-copy">Set STOCKORACLE_OPERATOR_PASSWORD and STOCKORACLE_SESSION_SECRET to enable operator login.</p> : null}
             {!authLoading && session.configured && !session.authenticated ? (
               <>
                 <label>
@@ -425,16 +431,24 @@ export default function Home() {
           <button className="primary-button" type="submit" disabled={loading}>
             {loading ? "Running model..." : "Generate movers"}
           </button>
-          <button className="secondary-button" type="button" disabled={!data || executing || !confirmExecution || !session.authenticated} onClick={executePlan}>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={!data || executing || !confirmExecution || !session.authenticated || (Boolean(data?.executionConfirmation.required) && !Boolean(data?.executionConfirmation.configured))}
+            onClick={executePlan}
+          >
             {executing ? "Submitting orders..." : `Submit top picks to ${executionMode}`}
           </button>
+          {data?.executionConfirmation.required && !data?.executionConfirmation.configured ? (
+            <p className="empty-copy">Trading is locked until STOCKORACLE_CONFIRMATION_SECRET is configured on the server.</p>
+          ) : null}
           {error ? <p className="error-copy">{error}</p> : null}
         </form>
 
         <section className="results-panel">
           <div className="metric-grid">
             <article>
-              <span>Avg same-slot holdout</span>
+              <span>Avg top-k strategy return</span>
               <strong>{percent((data?.metrics.avg_top_k_return as number | undefined) ?? undefined)}</strong>
             </article>
             <article>
@@ -448,6 +462,10 @@ export default function Home() {
             <article>
               <span>Backtest Sharpe</span>
               <strong>{number((data?.metrics.backtest_sharpe as number | undefined) ?? undefined, 2)}</strong>
+            </article>
+            <article>
+              <span>Directional accuracy</span>
+              <strong>{percent((data?.metrics.directional_accuracy as number | undefined) ?? undefined)}</strong>
             </article>
           </div>
 
@@ -475,7 +493,11 @@ export default function Home() {
                 <thead>
                   <tr>
                     <th>Symbol</th>
+                    <th>Side</th>
+                    <th>Opportunity</th>
                     <th>To-Close Return</th>
+                    <th>Return Range</th>
+                    <th>Prob Up</th>
                     <th>Confidence</th>
                     <th>Model</th>
                     <th>Overlay</th>
@@ -487,7 +509,11 @@ export default function Home() {
                   {(data?.ranking ?? []).map((row) => (
                     <tr key={row.symbol}>
                       <td>{row.symbol}</td>
+                      <td>{row.signal_side}</td>
+                      <td>{number(row.opportunity_score)}</td>
                       <td>{percent(row.predicted_return)}</td>
+                      <td>{`${percent(row.predicted_return_lower)} to ${percent(row.predicted_return_upper)}`}</td>
+                      <td>{percent(row.probability_up)}</td>
                       <td>{percent(row.confidence)}</td>
                       <td>{number(row.model_score)}</td>
                       <td>{number(row.overlay_score)}</td>
@@ -529,6 +555,8 @@ export default function Home() {
                     <th>Qty</th>
                     <th>Notional</th>
                     <th>Ref Price</th>
+                    <th>Pred Return</th>
+                    <th>Confidence</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -539,6 +567,8 @@ export default function Home() {
                       <td>{number(row.quantity, 0)}</td>
                       <td>${number(row.notional, 2)}</td>
                       <td>${number(row.reference_price, 2)}</td>
+                      <td>{percent(row.predicted_return)}</td>
+                      <td>{percent(row.confidence)}</td>
                     </tr>
                   ))}
                 </tbody>

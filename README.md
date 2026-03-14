@@ -8,9 +8,10 @@ StockOracle is a same-day stock mover ranking app built for intraday idea genera
 - Pulls recent intraday bars and trains on same-bar-slot examples from prior sessions
 - Builds momentum, volatility, volume, benchmark-relative, prior-day context, intraday bar state, and earnings-timing features
 - Pulls live news sentiment and options chain structure for score overlays
-- Trains an ensemble of tree models for:
+- Trains a blended ensemble of tree and full-batch neural gradient-descent models for:
   - same-day return-to-close prediction
   - same-day absolute move prediction
+- Estimates direction probability and return bands for long/short opportunity ranking
 - Scores the latest tradable intraday bar with a composite rank
 - Evaluates recent out-of-sample performance with an expanding-window holdout
 - Simulates a top-k portfolio with transaction costs and slippage
@@ -21,9 +22,11 @@ StockOracle is a same-day stock mover ranking app built for intraday idea genera
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-local.txt
 streamlit run streamlit_app.py
 ```
+
+For Vercel and Python API deployment, the root `requirements.txt` is intentionally trimmed to runtime-only dependencies so the Lambda bundle stays under the 500 MB ephemeral storage limit.
 
 ## Vercel deployment
 
@@ -53,6 +56,7 @@ Production checklist:
 - Set the Vercel framework preset to `Next.js`
 - Keep the repo root as the Vercel root directory
 - Verify Python functions are enabled for `api/*.py`
+- Keep `requirements.txt` limited to API runtime dependencies; use `requirements-local.txt` for the Streamlit research UI
 - Set `STOCKORACLE_SESSION_SECRET`, `STOCKORACLE_EXECUTION_TOKEN`, and `STOCKORACLE_CONFIRMATION_SECRET` in Vercel before enabling authenticated trade flows
 - Use `STOCKORACLE_REDIS_URL` for durable shared storage across serverless instances, or `STOCKORACLE_STORAGE_DIR` only for local disk-backed development
 

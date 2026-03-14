@@ -22,7 +22,7 @@ function getSessionSecret(): Uint8Array {
 
 
 export function operatorAuthConfigured(): boolean {
-  return Boolean(process.env.STOCKORACLE_OPERATOR_PASSWORD);
+  return Boolean(process.env.STOCKORACLE_OPERATOR_PASSWORD && process.env.STOCKORACLE_SESSION_SECRET);
 }
 
 
