@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+
+const execFileAsync = promisify(execFile);
+
 
 type PredictionInput = {
   universe?: string[] | string;
@@ -125,6 +131,13 @@ function parserFriendlyResponse(rankResponse: Record<string, unknown>, payload: 
     probabilityUp: row.probability_up,
     confidence: row.confidence,
     finalScore: row.final_score,
+    timingScore: row.timing_score,
+    futureScore: row.future_score,
+    futureConfidence: row.future_confidence,
+    nextDayReturn: row.future_return_1d,
+    next3DayReturn: row.future_return_3d,
+    next5DayReturn: row.future_return_5d,
+    directionAlignment: row.direction_alignment,
     minutesToClose: row.minutes_to_close,
     sessionReturnSoFar: row.session_return_so_far,
     newsSentiment: row.news_sentiment,
@@ -153,21 +166,78 @@ function parserFriendlyResponse(rankResponse: Record<string, unknown>, payload: 
     },
     predictions,
     metrics,
+    ranking: rankResponse.ranking ?? [],
+    featureImportance: rankResponse.featureImportance ?? [],
+    holdoutPredictions: rankResponse.holdoutPredictions ?? [],
+    backtestCurve: rankResponse.backtestCurve ?? [],
     executionPlan: rankResponse.executionPlan ?? [],
+    executionConfirmation: rankResponse.executionConfirmation ?? null,
   };
 }
 
 
-async function fetchPredictions(request: NextRequest, payload: Record<string, unknown>) {
+function localPythonExecutable(): string {
+  if (process.env.STOCKORACLE_PYTHON_BIN) {
+    return process.env.STOCKORACLE_PYTHON_BIN;
+  }
+  return process.platform === "win32" ? ".venv\\Scripts\\python.exe" : ".venv/bin/python";
+}
+
+
+async function runLocalPythonRank(payload: Record<string, unknown>) {
+  const script = [
+    "import json, math, sys",
+    "from pathlib import Path",
+    "root = Path.cwd()",
+    "src = root / 'src'",
+    "if str(src) not in sys.path: sys.path.insert(0, str(src))",
+    "from api.rank import RankingRequest, rank",
+    "def clean(value):",
+    "    if isinstance(value, float) and not math.isfinite(value): return None",
+    "    if isinstance(value, dict): return {k: clean(v) for k, v in value.items()}",
+    "    if isinstance(value, list): return [clean(v) for v in value]",
+    "    return value",
+    "payload = json.loads(sys.argv[1])",
+    "result = rank(RankingRequest(**payload))",
+    "print(json.dumps(clean(result), default=str))",
+  ].join("\n");
+
+  const { stdout } = await execFileAsync(localPythonExecutable(), ["-c", script, JSON.stringify(payload)], {
+    cwd: process.cwd(),
+    maxBuffer: 32 * 1024 * 1024,
+  });
+
+  return JSON.parse(stdout) as Record<string, unknown>;
+}
+
+
+async function fetchRankResponse(request: NextRequest, payload: Record<string, unknown>) {
   const response = await fetch(`${request.nextUrl.origin}/api/rank`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
     cache: "no-store",
   });
-  const json = await response.json();
-  if (!response.ok) {
-    const errorResponse = NextResponse.json({ ok: false, detail: json.detail || "Prediction request failed." }, { status: response.status });
+
+  if (response.status !== 404) {
+    const json = await response.json();
+    return { status: response.status, json };
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    const json = await response.json();
+    return { status: response.status, json };
+  }
+
+  const json = await runLocalPythonRank(payload);
+  return { status: 200, json };
+}
+
+
+async function fetchPredictions(request: NextRequest, payload: Record<string, unknown>) {
+  const { status, json } = await fetchRankResponse(request, payload);
+  if (status >= 400) {
+    const errorResponse = NextResponse.json({ ok: false, detail: json.detail || "Prediction request failed." }, { status });
     errorResponse.headers.set("Cache-Control", "no-store");
     return errorResponse;
   }

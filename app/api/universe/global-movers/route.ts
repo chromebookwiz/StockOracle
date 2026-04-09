@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
   const limit = request.nextUrl.searchParams.get("limit") || "60";
-  const response = await fetch(`${request.nextUrl.origin}/api/rank`, {
+  const response = await fetch(`${request.nextUrl.origin}/api/predictions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

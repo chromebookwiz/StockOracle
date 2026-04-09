@@ -2,8 +2,6 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-import { AssistantPanel } from "./components/assistant-panel";
-
 type RankingRow = {
   symbol: string;
   signal_side: string;
@@ -21,6 +19,13 @@ type RankingRow = {
   session_return_so_far?: number | null;
   news_sentiment?: number | null;
   options_put_call_oi?: number | null;
+  timing_score?: number | null;
+  future_score?: number | null;
+  future_confidence?: number | null;
+  future_return_1d?: number | null;
+  future_return_3d?: number | null;
+  future_return_5d?: number | null;
+  direction_alignment?: number | null;
 };
 
 type FeatureRow = {
@@ -35,6 +40,7 @@ type BacktestRow = {
 };
 
 type ApiResponse = {
+  ok?: boolean;
   ranking: RankingRow[];
   metrics: Record<string, number | string>;
   featureImportance: FeatureRow[];
@@ -97,6 +103,13 @@ function number(value: number | string | undefined, digits = 2): string {
   return value.toFixed(digits);
 }
 
+function currency(value: number | string | undefined): string {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "--";
+  }
+  return `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
 function sparklinePath(points: BacktestRow[]): string {
   if (points.length === 0) {
     return "";
@@ -151,6 +164,7 @@ export default function Home() {
         .filter(Boolean),
     [universe],
   );
+  const topSetups = useMemo(() => (data?.ranking ?? []).slice(0, 3), [data]);
 
   async function refreshSession() {
     const response = await fetch("/api/auth/session", { cache: "no-store" });
@@ -184,7 +198,7 @@ export default function Home() {
     }
   }, [executionMode, session.authenticated]);
 
-  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+  async function runPredictions(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setError(null);
@@ -203,8 +217,8 @@ export default function Home() {
       holdoutDays,
       topK,
       intradayPeriodDays,
-      enableLiveNews: liveNews,
       intradayInterval,
+      enableLiveNews: liveNews,
       enableLiveOptions: liveOptions,
       enableEarningsFeatures: earningsFeatures,
       executionMode,
@@ -213,7 +227,7 @@ export default function Home() {
     };
 
     try {
-      const response = await fetch("/api/rank", {
+      const response = await fetch("/api/predictions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -310,128 +324,139 @@ export default function Home() {
 
   return (
     <main className="page-shell">
-      <section className="hero-panel">
-        <div>
-          <p className="eyebrow">Same-Day Close Targeting</p>
-          <h1>StockOracle</h1>
-          <p className="hero-copy">
-            A same-day profit tool that ranks stocks by predicted return from the current intraday bar into the close,
-            blending live bar structure, prior-day context, news sentiment, options positioning, earnings timing, and a
-            time-aligned walk-forward backtest.
-          </p>
+      <section className="masthead">
+        <div className="brand-lockup">
+          <p className="eyebrow">StockOracle</p>
+          <h1>Signal Desk</h1>
         </div>
-        <div className="hero-metrics">
-          <span>Vercel-ready frontend</span>
-          <span>Python serverless API</span>
-          <span>Walk-forward evaluation</span>
+        <div className="masthead-meta">
+          <span>{benchmark}</span>
+          <span>{intradayInterval}</span>
+          <span>{discoverGlobalMovers ? `Global ${globalMoversLimit}` : `${universeList.length} names`}</span>
+          <span>{session.authenticated ? `Operator ${session.username}` : "Research mode"}</span>
         </div>
       </section>
 
       <section className="grid-layout">
-        <form className="control-panel" onSubmit={onSubmit}>
-          <div className="toggle-grid">
+        <form className="control-panel" onSubmit={runPredictions}>
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Scan Setup</p>
+              <h2>Universe</h2>
+            </div>
+            <div className="panel-stat">{discoverGlobalMovers ? `Live scan ${globalMoversLimit}` : `${universeList.length} tickers`}</div>
+          </div>
+
+          <div className="toggle-grid compact-grid">
             <label>
               <input type="checkbox" checked={discoverGlobalMovers} onChange={(event) => setDiscoverGlobalMovers(event.target.checked)} />
-              Discover top movers globally
+              Market-wide scan
             </label>
           </div>
 
           <label>
-            {discoverGlobalMovers ? "Manual Universe Override" : "Universe"}
+            Symbols
             <textarea value={universe} onChange={(event) => setUniverse(event.target.value)} rows={8} disabled={discoverGlobalMovers} />
           </label>
 
-          {discoverGlobalMovers ? <p className="empty-copy">StockOracle will discover liquid global movers automatically from live Yahoo market screeners, then rank them for same-day opportunity.</p> : null}
-
-          <div className="two-up">
-            <label>
-              Benchmark
-              <input value={benchmark} onChange={(event) => setBenchmark(event.target.value.toUpperCase())} />
-            </label>
-            <label>
-              Global mover pool
-              <input type="range" min="20" max="120" step="10" value={globalMoversLimit} onChange={(event) => setGlobalMoversLimit(Number(event.target.value))} disabled={!discoverGlobalMovers} />
-              <span>{globalMoversLimit}</span>
-            </label>
-            <label>
-              Start Date
-              <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
-            </label>
+          <div className="control-section">
+            <div className="section-title">Model Window</div>
+            <div className="two-up">
+              <label>
+                Benchmark
+                <input value={benchmark} onChange={(event) => setBenchmark(event.target.value.toUpperCase())} />
+              </label>
+              <label>
+                Start Date
+                <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+              </label>
+              <label>
+                Top Picks
+                <input type="range" min="3" max="20" value={topK} onChange={(event) => setTopK(Number(event.target.value))} />
+                <span>{topK}</span>
+              </label>
+              <label>
+                Holdout Days
+                <input type="range" min="15" max="90" value={holdoutDays} onChange={(event) => setHoldoutDays(Number(event.target.value))} />
+                <span>{holdoutDays}</span>
+              </label>
+            </div>
           </div>
 
-          <div className="two-up">
-            <label>
-              Holdout Days
-              <input type="range" min="15" max="90" value={holdoutDays} onChange={(event) => setHoldoutDays(Number(event.target.value))} />
-              <span>{holdoutDays}</span>
-            </label>
-            <label>
-              Intraday Interval
-              <select value={intradayInterval} onChange={(event) => setIntradayInterval(event.target.value)}>
-                <option value="5m">5m</option>
-                <option value="15m">15m</option>
-                <option value="30m">30m</option>
-                <option value="60m">60m</option>
-              </select>
-            </label>
+          <div className="control-section">
+            <div className="section-title">Timing Inputs</div>
+            <div className="two-up">
+              <label>
+                Global mover pool
+                <input type="range" min="20" max="120" step="10" value={globalMoversLimit} onChange={(event) => setGlobalMoversLimit(Number(event.target.value))} disabled={!discoverGlobalMovers} />
+                <span>{globalMoversLimit}</span>
+              </label>
+              <label>
+                Intraday Interval
+                <select value={intradayInterval} onChange={(event) => setIntradayInterval(event.target.value)}>
+                  <option value="5m">5m</option>
+                  <option value="15m">15m</option>
+                  <option value="30m">30m</option>
+                  <option value="60m">60m</option>
+                </select>
+              </label>
+              <label>
+                Intraday Lookback
+                <input type="range" min="10" max="60" value={intradayPeriodDays} onChange={(event) => setIntradayPeriodDays(Number(event.target.value))} />
+                <span>{intradayPeriodDays}d</span>
+              </label>
+            </div>
           </div>
 
-          <div className="two-up">
-            <label>
-              Top Picks
-              <input type="range" min="3" max="20" value={topK} onChange={(event) => setTopK(Number(event.target.value))} />
-              <span>{topK}</span>
-            </label>
-            <label>
-              Intraday Lookback
-              <input
-                type="range"
-                min="10"
-                max="60"
-                value={intradayPeriodDays}
-                onChange={(event) => setIntradayPeriodDays(Number(event.target.value))}
-              />
-              <span>{intradayPeriodDays}d</span>
-            </label>
+          <div className="control-section">
+            <div className="section-title">Overlays</div>
+            <div className="toggle-grid compact-grid">
+              <label>
+                <input type="checkbox" checked={liveNews} onChange={(event) => setLiveNews(event.target.checked)} />
+                News
+              </label>
+              <label>
+                <input type="checkbox" checked={liveOptions} onChange={(event) => setLiveOptions(event.target.checked)} />
+                Options
+              </label>
+              <label>
+                <input type="checkbox" checked={earningsFeatures} onChange={(event) => setEarningsFeatures(event.target.checked)} />
+                Earnings
+              </label>
+            </div>
           </div>
 
-          <div className="toggle-grid">
-            <label>
-              <input type="checkbox" checked={liveNews} onChange={(event) => setLiveNews(event.target.checked)} />
-              Live news sentiment
-            </label>
-            <label>
-              <input type="checkbox" checked={liveOptions} onChange={(event) => setLiveOptions(event.target.checked)} />
-              Live options flow
-            </label>
-            <label>
-              <input type="checkbox" checked={earningsFeatures} onChange={(event) => setEarningsFeatures(event.target.checked)} />
-              Earnings timing
-            </label>
-          </div>
-
-          <div className="two-up">
-            <label>
-              Execution Mode
-              <select value={executionMode} onChange={(event) => setExecutionMode(event.target.value)}>
-                <option value="paper">paper</option>
-                <option value="alpaca">alpaca</option>
-              </select>
-            </label>
-            <label>
-              Starting Capital
-              <input type="number" value={startingCapital} onChange={(event) => setStartingCapital(Number(event.target.value))} />
-            </label>
-            <label>
-              Max Notional / Trade
-              <input type="number" value={maxNotionalPerTrade} onChange={(event) => setMaxNotionalPerTrade(Number(event.target.value))} />
-            </label>
+          <div className="control-section">
+            <div className="section-title">Execution</div>
+            <div className="two-up">
+              <label>
+                Execution Mode
+                <select value={executionMode} onChange={(event) => setExecutionMode(event.target.value)}>
+                  <option value="paper">paper</option>
+                  <option value="alpaca">alpaca</option>
+                </select>
+              </label>
+              <label>
+                Starting Capital
+                <input type="number" value={startingCapital} onChange={(event) => setStartingCapital(Number(event.target.value))} />
+              </label>
+              <label>
+                Max Notional / Trade
+                <input type="number" value={maxNotionalPerTrade} onChange={(event) => setMaxNotionalPerTrade(Number(event.target.value))} />
+              </label>
+            </div>
           </div>
 
           <div className="auth-card">
-            <p className="eyebrow">Operator Auth</p>
+            <div className="panel-header tight-header">
+              <div>
+                <p className="eyebrow">Operator</p>
+                <h3>Session</h3>
+              </div>
+              <div className="panel-stat">{session.authenticated ? "Open" : "Locked"}</div>
+            </div>
             {authLoading ? <p className="empty-copy">Checking session...</p> : null}
-            {!authLoading && !session.configured ? <p className="empty-copy">Set STOCKORACLE_OPERATOR_PASSWORD and STOCKORACLE_SESSION_SECRET to enable operator login.</p> : null}
+            {!authLoading && !session.configured ? <p className="empty-copy">Set operator auth secrets to unlock trade actions.</p> : null}
             {!authLoading && session.configured && !session.authenticated ? (
               <>
                 <label>
@@ -443,13 +468,13 @@ export default function Home() {
                   <input type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} />
                 </label>
                 <button className="secondary-button" type="button" onClick={login}>
-                  Sign in operator
+                  Sign in
                 </button>
               </>
             ) : null}
             {!authLoading && session.authenticated ? (
               <>
-                <p className="empty-copy">Signed in as {session.username}.</p>
+                <p className="empty-copy">{session.username}</p>
                 <button className="secondary-button" type="button" onClick={logout}>
                   Sign out
                 </button>
@@ -459,98 +484,158 @@ export default function Home() {
 
           <label className="checkbox-row">
             <input type="checkbox" checked={confirmExecution} onChange={(event) => setConfirmExecution(event.target.checked)} />
-            I confirm the current execution plan and want to submit these orders.
+            Confirm current orders
           </label>
 
-          <button className="primary-button" type="submit" disabled={loading}>
-            {loading ? "Running model..." : "Generate movers"}
-          </button>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={!data || executing || !confirmExecution || !session.authenticated || (Boolean(data?.executionConfirmation.required) && !Boolean(data?.executionConfirmation.configured))}
-            onClick={executePlan}
-          >
-            {executing ? "Submitting orders..." : `Submit top picks to ${executionMode}`}
-          </button>
+          <div className="action-row">
+            <button className="primary-button" type="submit" disabled={loading}>
+              {loading ? "Running..." : "Refresh board"}
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={!data || executing || !confirmExecution || !session.authenticated || (Boolean(data?.executionConfirmation.required) && !Boolean(data?.executionConfirmation.configured))}
+              onClick={executePlan}
+            >
+              {executing ? "Submitting..." : "Send top picks"}
+            </button>
+          </div>
+
           {data?.executionConfirmation.required && !data?.executionConfirmation.configured ? (
-            <p className="empty-copy">Trading is locked until STOCKORACLE_CONFIRMATION_SECRET is configured on the server.</p>
+            <p className="empty-copy">Execution confirmation secrets are not configured.</p>
           ) : null}
           {error ? <p className="error-copy">{error}</p> : null}
         </form>
 
         <section className="results-panel">
-          <div className="metric-grid">
-            <article>
-              <span>Avg top-k strategy return</span>
+          <div className="overview-strip">
+            <article className="summary-card">
+              <span>Session edge</span>
               <strong>{percent((data?.metrics.avg_top_k_return as number | undefined) ?? undefined)}</strong>
             </article>
-            <article>
+            <article className="summary-card">
               <span>Hit rate</span>
               <strong>{percent((data?.metrics.top_k_hit_rate as number | undefined) ?? undefined)}</strong>
             </article>
-            <article>
-              <span>Minutes to close</span>
-              <strong>{number((data?.metrics.median_minutes_to_close as number | undefined) ?? undefined, 0)}</strong>
-            </article>
-            <article>
-              <span>Backtest Sharpe</span>
+            <article className="summary-card">
+              <span>Sharpe</span>
               <strong>{number((data?.metrics.backtest_sharpe as number | undefined) ?? undefined, 2)}</strong>
             </article>
-            <article>
-              <span>Directional accuracy</span>
-              <strong>{percent((data?.metrics.directional_accuracy as number | undefined) ?? undefined)}</strong>
+            <article className="summary-card">
+              <span>Next 3d median</span>
+              <strong>{percent((data?.metrics.median_future_return_3d as number | undefined) ?? undefined)}</strong>
+            </article>
+            <article className="summary-card">
+              <span>Signal alignment</span>
+              <strong>{percent((data?.metrics.signal_alignment_rate as number | undefined) ?? undefined)}</strong>
+            </article>
+            <article className="summary-card">
+              <span>Minutes left</span>
+              <strong>{number((data?.metrics.median_minutes_to_close as number | undefined) ?? undefined, 0)}</strong>
             </article>
           </div>
 
+          <div className="leader-grid">
+            {topSetups.length ? (
+              topSetups.map((row, index) => (
+                <article key={row.symbol} className="leader-card">
+                  <div className="leader-header">
+                    <div>
+                      <p className="eyebrow">Setup {index + 1}</p>
+                      <h3>{row.symbol}</h3>
+                    </div>
+                    <span className={`side-pill ${row.signal_side}`}>{row.signal_side}</span>
+                  </div>
+                  <div className="leader-metrics">
+                    <div>
+                      <span>To close</span>
+                      <strong>{percent(row.predicted_return)}</strong>
+                    </div>
+                    <div>
+                      <span>Next 1d</span>
+                      <strong>{percent(row.future_return_1d ?? undefined)}</strong>
+                    </div>
+                    <div>
+                      <span>Next 3d</span>
+                      <strong>{percent(row.future_return_3d ?? undefined)}</strong>
+                    </div>
+                    <div>
+                      <span>Next 5d</span>
+                      <strong>{percent(row.future_return_5d ?? undefined)}</strong>
+                    </div>
+                  </div>
+                  <div className="leader-footer">
+                    <span>Confidence {percent(row.confidence)}</span>
+                    <span>Timing {number(row.timing_score ?? undefined)}</span>
+                    <span>Swing {number(row.future_score ?? undefined)}</span>
+                  </div>
+                </article>
+              ))
+            ) : (
+              <article className="leader-card leader-empty">
+                <p className="eyebrow">Board</p>
+                <h3>No live ranking</h3>
+                <p className="empty-copy">Run the scan to populate the mover board.</p>
+              </article>
+            )}
+          </div>
+
           <div className="chart-card">
-            <div>
-              <p className="eyebrow">Backtest Curve</p>
-              <h2>Cost-aware equity path</h2>
+            <div className="panel-header tight-header">
+              <div>
+                <p className="eyebrow">Backtest</p>
+                <h2>Equity path</h2>
+              </div>
+              <div className="panel-stat">{currency(startingCapital)}</div>
             </div>
             {data?.backtestCurve?.length ? (
               <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="sparkline">
                 <path d={sparkline} vectorEffect="non-scaling-stroke" />
               </svg>
             ) : (
-              <p className="empty-copy">Run the model to render the holdout equity curve.</p>
+              <p className="empty-copy">No backtest curve yet.</p>
             )}
           </div>
 
           <div className="table-card">
-            <div>
-              <p className="eyebrow">Ranked Movers</p>
-              <h2>Latest session</h2>
+            <div className="panel-header tight-header">
+              <div>
+                <p className="eyebrow">Mover Board</p>
+                <h2>Current ranking</h2>
+              </div>
+              <div className="panel-stat">{data?.ranking.length ?? 0} rows</div>
             </div>
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
                     <th>Symbol</th>
-                    <th>Side</th>
-                    <th>Opportunity</th>
-                    <th>To-Close Return</th>
-                    <th>Return Range</th>
-                    <th>Prob Up</th>
-                    <th>Confidence</th>
-                    <th>Model</th>
-                    <th>Overlay</th>
+                    <th>Bias</th>
+                    <th>To Close</th>
+                    <th>Next 1d</th>
+                    <th>Next 3d</th>
+                    <th>Next 5d</th>
+                    <th>Conf</th>
+                    <th>Timing</th>
+                    <th>Swing</th>
                     <th>Final</th>
-                    <th>Mins Left</th>
+                    <th>Mins</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(data?.ranking ?? []).map((row) => (
                     <tr key={row.symbol}>
                       <td>{row.symbol}</td>
-                      <td>{row.signal_side}</td>
-                      <td>{number(row.opportunity_score)}</td>
+                      <td>
+                        <span className={`side-pill ${row.signal_side}`}>{row.signal_side}</span>
+                      </td>
                       <td>{percent(row.predicted_return)}</td>
-                      <td>{`${percent(row.predicted_return_lower)} to ${percent(row.predicted_return_upper)}`}</td>
-                      <td>{percent(row.probability_up)}</td>
+                      <td>{percent(row.future_return_1d ?? undefined)}</td>
+                      <td>{percent(row.future_return_3d ?? undefined)}</td>
+                      <td>{percent(row.future_return_5d ?? undefined)}</td>
                       <td>{percent(row.confidence)}</td>
-                      <td>{number(row.model_score)}</td>
-                      <td>{number(row.overlay_score)}</td>
+                      <td>{number(row.timing_score ?? undefined)}</td>
+                      <td>{number(row.future_score ?? undefined)}</td>
                       <td>{number(row.final_score)}</td>
                       <td>{number(row.minutes_to_close ?? undefined, 0)}</td>
                     </tr>
@@ -560,25 +645,13 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="feature-card">
-            <div>
-              <p className="eyebrow">Driver Map</p>
-              <h2>Top feature importance</h2>
-            </div>
-            <div className="feature-list">
-              {(data?.featureImportance ?? []).slice(0, 10).map((feature) => (
-                <div key={feature.feature} className="feature-row">
-                  <span>{feature.feature}</span>
-                  <strong>{number(feature.importance, 3)}</strong>
-                </div>
-              ))}
-            </div>
-          </div>
-
           <div className="table-card">
-            <div>
-              <p className="eyebrow">Execution</p>
-              <h2>Paper trade plan</h2>
+            <div className="panel-header tight-header">
+              <div>
+                <p className="eyebrow">Execution</p>
+                <h2>Order staging</h2>
+              </div>
+              <div className="panel-stat">{executionMode}</div>
             </div>
             <div className="table-wrap">
               <table>
@@ -610,7 +683,7 @@ export default function Home() {
             </div>
             {positions.length ? (
               <div className="positions-block">
-                <p className="eyebrow">Paper Broker Positions</p>
+                <p className="eyebrow">Open positions</p>
                 {positions.map((position) => (
                   <div key={position.symbol} className="feature-row">
                     <span>{position.symbol}</span>
@@ -622,26 +695,6 @@ export default function Home() {
           </div>
         </section>
       </section>
-      <AssistantPanel
-        config={{
-          universe: universeList,
-          discoverGlobalMovers,
-          globalMoversLimit,
-          operatorAuthenticated: session.authenticated,
-          benchmark,
-          startDate,
-          holdoutDays,
-          topK,
-          intradayPeriodDays,
-          intradayInterval,
-          enableLiveNews: liveNews,
-          enableLiveOptions: liveOptions,
-          enableEarningsFeatures: earningsFeatures,
-          startingCapital,
-          maxNotionalPerTrade,
-          executionMode,
-        }}
-      />
     </main>
   );
 }

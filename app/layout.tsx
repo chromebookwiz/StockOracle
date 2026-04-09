@@ -7,8 +7,8 @@ const sans = Space_Grotesk({ subsets: ["latin"], variable: "--font-sans" });
 const mono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-mono" });
 
 export const metadata: Metadata = {
-  title: "StockOracle",
-  description: "Daily stock mover ranking with intraday, event, news, options, and backtest diagnostics.",
+  title: "StockOracle | Signal Desk",
+  description: "Cross-session stock mover terminal for intraday timing and multi-day follow-through.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

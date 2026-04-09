@@ -6,13 +6,18 @@ import pandas as pd
 
 FEATURE_COLUMNS = [
     "ret_1",
+    "ret_2",
     "ret_3",
     "ret_5",
+    "ret_8",
     "ret_10",
     "ret_20",
+    "ret_60",
     "volume_z_20",
+    "dollar_volume_z_20",
     "volatility_10",
     "volatility_20",
+    "volatility_ratio_10_20",
     "range_pct",
     "gap_pct",
     "sma_10_gap",
@@ -25,8 +30,16 @@ FEATURE_COLUMNS = [
     "macd_hist",
     "rsi_14",
     "atr_pct_14",
+    "atr_regime_14_50",
     "price_position_20",
     "drawdown_20",
+    "breakout_distance_55",
+    "momentum_spread_5_20",
+    "momentum_spread_20_60",
+    "mean_reversion_3_10",
+    "trend_gap_20_50",
+    "realized_skew_20",
+    "realized_kurtosis_20",
     "benchmark_ret_5",
     "benchmark_ret_20",
     "relative_strength_5",
@@ -194,18 +207,26 @@ def build_feature_frame(
         close = close.fillna(frame["close"])
 
         frame["ret_1"] = close.pct_change(1)
+        frame["ret_2"] = close.pct_change(2)
         frame["ret_3"] = close.pct_change(3)
         frame["ret_5"] = close.pct_change(5)
+        frame["ret_8"] = close.pct_change(8)
         frame["ret_10"] = close.pct_change(10)
         frame["ret_20"] = close.pct_change(20)
+        frame["ret_60"] = close.pct_change(60)
 
         log_volume = np.log1p(frame["volume"])
         volume_mean = log_volume.rolling(20).mean()
         volume_std = log_volume.rolling(20).std().replace(0.0, np.nan)
         frame["volume_z_20"] = (log_volume - volume_mean) / volume_std
+        dollar_volume = np.log1p((frame["close"].fillna(0.0) * frame["volume"].fillna(0.0)).clip(lower=0.0))
+        dollar_volume_mean = dollar_volume.rolling(20).mean()
+        dollar_volume_std = dollar_volume.rolling(20).std().replace(0.0, np.nan)
+        frame["dollar_volume_z_20"] = (dollar_volume - dollar_volume_mean) / dollar_volume_std
 
         frame["volatility_10"] = frame["ret_1"].rolling(10).std()
         frame["volatility_20"] = frame["ret_1"].rolling(20).std()
+        frame["volatility_ratio_10_20"] = frame["volatility_10"] / frame["volatility_20"].replace(0.0, np.nan)
         frame["range_pct"] = (frame["high"] - frame["low"]) / frame["close"].replace(0.0, np.nan)
         frame["gap_pct"] = (frame["open"] - frame["close"].shift(1)) / frame["close"].shift(1).replace(0.0, np.nan)
 
@@ -214,6 +235,9 @@ def build_feature_frame(
         sma_50 = close.rolling(50).mean()
         ema_12 = _ema(close, 12)
         ema_26 = _ema(close, 26)
+        atr_14 = _atr(frame, 14)
+        atr_50 = _atr(frame, 50)
+        rolling_high_55 = close.rolling(55).max()
 
         frame["sma_10_gap"] = close / sma_10 - 1
         frame["sma_20_gap"] = close / sma_20 - 1
@@ -225,12 +249,20 @@ def build_feature_frame(
         frame["macd_signal"] = _ema(frame["macd"], 9)
         frame["macd_hist"] = frame["macd"] - frame["macd_signal"]
         frame["rsi_14"] = _rsi(close, 14)
-        frame["atr_pct_14"] = _atr(frame, 14) / close.replace(0.0, np.nan)
+        frame["atr_pct_14"] = atr_14 / close.replace(0.0, np.nan)
+        frame["atr_regime_14_50"] = atr_14 / atr_50.replace(0.0, np.nan)
 
         rolling_min = close.rolling(20).min()
         rolling_max = close.rolling(20).max()
         frame["price_position_20"] = (close - rolling_min) / (rolling_max - rolling_min).replace(0.0, np.nan)
         frame["drawdown_20"] = close / rolling_max - 1
+        frame["breakout_distance_55"] = close / rolling_high_55.replace(0.0, np.nan) - 1
+        frame["momentum_spread_5_20"] = frame["ret_5"] - frame["ret_20"]
+        frame["momentum_spread_20_60"] = frame["ret_20"] - frame["ret_60"]
+        frame["mean_reversion_3_10"] = frame["ret_3"] - frame["ret_10"]
+        frame["trend_gap_20_50"] = sma_20 / sma_50 - 1
+        frame["realized_skew_20"] = frame["ret_1"].rolling(20).skew()
+        frame["realized_kurtosis_20"] = frame["ret_1"].rolling(20).kurt()
 
         feature_frames.append(frame)
 
@@ -274,16 +306,28 @@ def build_feature_frame(
     return combined.sort_values(["date", "symbol"]).reset_index(drop=True)
 
 
-def add_targets(feature_frame: pd.DataFrame, horizon_days: int) -> pd.DataFrame:
+def add_multi_horizon_targets(feature_frame: pd.DataFrame, horizons: tuple[int, ...] = (1, 3, 5)) -> pd.DataFrame:
     labeled_frames: list[pd.DataFrame] = []
 
     for _, symbol_frame in feature_frame.groupby("symbol", sort=False):
         frame = symbol_frame.sort_values("date").copy()
-        future_close = frame["adj_close"].where(frame["adj_close"] > 0, frame["close"]).shift(-horizon_days)
         current_close = frame["adj_close"].where(frame["adj_close"] > 0, frame["close"])
-        frame["target_return"] = future_close / current_close - 1
-        frame["target_abs_move"] = frame["target_return"].abs()
+        for horizon_days in horizons:
+            future_close = current_close.shift(-horizon_days)
+            target_return_column = f"target_return_{horizon_days}d"
+            target_abs_move_column = f"target_abs_move_{horizon_days}d"
+            frame[target_return_column] = future_close / current_close - 1
+            frame[target_abs_move_column] = frame[target_return_column].abs()
         labeled_frames.append(frame)
 
-    labeled = pd.concat(labeled_frames, ignore_index=True)
-    return labeled
+    return pd.concat(labeled_frames, ignore_index=True)
+
+
+def add_targets(feature_frame: pd.DataFrame, horizon_days: int) -> pd.DataFrame:
+    labeled = add_multi_horizon_targets(feature_frame, horizons=(horizon_days,))
+    return labeled.rename(
+        columns={
+            f"target_return_{horizon_days}d": "target_return",
+            f"target_abs_move_{horizon_days}d": "target_abs_move",
+        }
+    )

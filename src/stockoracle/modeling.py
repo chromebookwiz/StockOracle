@@ -322,6 +322,103 @@ class EnsembleRanker:
         )
 
 
+class DailyHorizonRanker:
+    def __init__(self, horizons: tuple[int, ...] = (1, 3, 5), random_state: int = 42) -> None:
+        self.horizons = tuple(sorted(set(horizons)))
+        self.random_state = random_state
+        self.models: dict[int, EnsembleRanker] = {}
+        self.active_feature_columns: dict[int, list[str]] = {}
+
+    def fit(self, frame: pd.DataFrame, feature_columns: list[str], sample_weight: np.ndarray | None = None) -> None:
+        for horizon in self.horizons:
+            target_return_column = f"target_return_{horizon}d"
+            target_abs_move_column = f"target_abs_move_{horizon}d"
+            if target_return_column not in frame.columns or target_abs_move_column not in frame.columns:
+                continue
+
+            training_frame = frame.dropna(subset=[target_return_column, target_abs_move_column]).copy()
+            active_columns = [column for column in feature_columns if training_frame[column].notna().any()]
+            if len(training_frame) < max(80, len(active_columns) * 3) or not active_columns:
+                continue
+
+            if sample_weight is not None:
+                aligned_weights = pd.Series(sample_weight, index=frame.index).reindex(training_frame.index).to_numpy(dtype=float)
+            else:
+                aligned_weights = None
+
+            prepared = training_frame.rename(
+                columns={
+                    target_return_column: "target_return",
+                    target_abs_move_column: "target_abs_move",
+                }
+            )
+            ranker = EnsembleRanker(random_state=self.random_state + horizon * 101)
+            ranker.fit(prepared, active_columns, sample_weight=aligned_weights)
+            self.models[horizon] = ranker
+            self.active_feature_columns[horizon] = active_columns
+
+        if not self.models:
+            raise ValueError("No daily horizon models could be fit with the available history.")
+
+    def predict(self, frame: pd.DataFrame) -> pd.DataFrame:
+        if not self.models:
+            raise ValueError("Daily horizon models have not been fit.")
+
+        result = frame[["date", "symbol", "close", "adj_close"]].copy()
+        weights = {1: 0.45, 3: 0.35, 5: 0.20}
+        blended_scores = np.zeros(len(frame), dtype=float)
+        blended_returns = np.zeros(len(frame), dtype=float)
+        blended_confidence = np.zeros(len(frame), dtype=float)
+
+        for horizon in self.horizons:
+            ranker = self.models.get(horizon)
+            active_columns = self.active_feature_columns.get(horizon)
+            if ranker is None or not active_columns:
+                continue
+
+            prediction = ranker.predict(frame, active_columns)
+            horizon_weight = weights.get(horizon, 1 / max(len(self.horizons), 1))
+            result[f"future_return_{horizon}d"] = prediction["predicted_return"].to_numpy(dtype=float)
+            result[f"future_move_{horizon}d"] = prediction["predicted_move"].to_numpy(dtype=float)
+            result[f"future_probability_up_{horizon}d"] = prediction["probability_up"].to_numpy(dtype=float)
+            result[f"future_confidence_{horizon}d"] = prediction["confidence"].to_numpy(dtype=float)
+            result[f"future_score_component_{horizon}d"] = prediction["score"].to_numpy(dtype=float)
+
+            blended_scores += horizon_weight * _zscore(prediction["score"].to_numpy(dtype=float))
+            blended_returns += horizon_weight * prediction["predicted_return"].to_numpy(dtype=float)
+            blended_confidence += horizon_weight * prediction["confidence"].to_numpy(dtype=float)
+
+        result["future_return_blend"] = blended_returns
+        result["future_score"] = blended_scores + 0.25 * _zscore(blended_returns)
+        result["future_confidence"] = np.clip(blended_confidence, 0.0, 1.0)
+        result["future_signal_side"] = np.where(result["future_score"] >= 0, "long", "short")
+        return result.sort_values(["future_score", "future_confidence"], ascending=[False, False]).reset_index(drop=True)
+
+    def feature_importance(self) -> pd.DataFrame:
+        importance_frames: list[pd.DataFrame] = []
+        weights = {1: 0.45, 3: 0.35, 5: 0.20}
+        for horizon, ranker in self.models.items():
+            active_columns = self.active_feature_columns.get(horizon, [])
+            if not active_columns:
+                continue
+            importance = ranker.feature_importance(active_columns)
+            if importance.empty:
+                continue
+            importance["importance"] = importance["importance"] * weights.get(horizon, 1.0)
+            importance_frames.append(importance)
+
+        if not importance_frames:
+            return pd.DataFrame(columns=["feature", "importance"])
+
+        merged = pd.concat(importance_frames, ignore_index=True)
+        return (
+            merged.groupby("feature", as_index=False)["importance"]
+            .sum()
+            .sort_values("importance", ascending=False)
+            .reset_index(drop=True)
+        )
+
+
 def evaluate_holdout(
     full_frame: pd.DataFrame,
     feature_columns: list[str],
