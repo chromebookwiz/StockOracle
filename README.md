@@ -191,7 +191,6 @@ Recommended deployment notes:
 - Configure `STOCKORACLE_REDIS_URL` so autopilot state survives serverless instance churn
 - If you enable `alpaca`, also set `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, and optionally `ALPACA_BASE_URL`
 - Use a separate secret for `STOCKORACLE_AUTOPILOT_TOKEN` instead of reusing public UI credentials
-- The workflow is in `.github/workflows/autopilot-scheduler.yml` and can also be triggered manually with `workflow_dispatch`
 
 ## Notes
 

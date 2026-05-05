@@ -21,6 +21,11 @@ def _zscore(series: pd.Series) -> pd.Series:
     return (numeric - numeric.mean()) / std
 
 
+def _directional_return(values: pd.Series, signal_side: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(values, errors="coerce").fillna(0.0)
+    return np.where(signal_side.eq("short"), -numeric, numeric)
+
+
 def _apply_live_overlays(ranking: pd.DataFrame, live_features: pd.DataFrame) -> pd.DataFrame:
     if live_features.empty:
         ranking["overlay_score"] = 0.0
@@ -121,6 +126,40 @@ def _blend_future_horizon_signals(ranking: pd.DataFrame, future_predictions: pd.
     return merged.sort_values(["opportunity_score", "confidence"], ascending=[False, False]).reset_index(drop=True)
 
 
+def _enrich_decision_frame(ranking: pd.DataFrame) -> pd.DataFrame:
+    enriched = ranking.copy()
+    signal_side = enriched["signal_side"].astype(str)
+    timing_edge = pd.Series(_directional_return(enriched.get("predicted_return", pd.Series(0.0, index=enriched.index)), signal_side), index=enriched.index)
+    future_edge = pd.Series(_directional_return(enriched.get("future_return_blend", pd.Series(0.0, index=enriched.index)), signal_side), index=enriched.index)
+    prediction_interval = pd.to_numeric(enriched.get("prediction_interval", pd.Series(0.0, index=enriched.index)), errors="coerce").fillna(0.0)
+    model_disagreement = pd.to_numeric(enriched.get("model_disagreement", pd.Series(0.0, index=enriched.index)), errors="coerce").fillna(0.0)
+    confidence = pd.to_numeric(enriched.get("confidence", pd.Series(0.0, index=enriched.index)), errors="coerce").fillna(0.0)
+    alignment = pd.to_numeric(enriched.get("direction_alignment", pd.Series(0.0, index=enriched.index)), errors="coerce").fillna(0.0)
+    final_score = pd.to_numeric(enriched.get("final_score", pd.Series(0.0, index=enriched.index)), errors="coerce").fillna(0.0)
+
+    expected_edge = (0.6 * timing_edge + 0.4 * future_edge).clip(lower=0.0)
+    risk_budget = prediction_interval + (0.35 * model_disagreement)
+    reward_risk_ratio = expected_edge / (risk_budget + 1e-4)
+    setup_quality = (
+        0.30 * _zscore(expected_edge)
+        + 0.20 * _zscore(confidence)
+        + 0.20 * _zscore(reward_risk_ratio)
+        + 0.15 * _zscore(final_score.abs())
+        + 0.10 * alignment
+        - 0.10 * _zscore(prediction_interval)
+        - 0.05 * _zscore(model_disagreement)
+    )
+
+    enriched["timing_edge"] = timing_edge
+    enriched["future_edge"] = future_edge
+    enriched["expected_edge"] = expected_edge
+    enriched["risk_budget"] = risk_budget
+    enriched["reward_risk_ratio"] = reward_risk_ratio.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    enriched["setup_quality"] = setup_quality
+    enriched["opportunity_score"] = setup_quality
+    return enriched.sort_values(["setup_quality", "confidence"], ascending=[False, False]).reset_index(drop=True)
+
+
 def run_stock_oracle(config: AppConfig) -> ModelOutput:
     symbols = config.normalized_universe()
     tradable_symbols = config.tradable_universe()
@@ -215,6 +254,7 @@ def run_stock_oracle(config: AppConfig) -> ModelOutput:
 
     current_ranking = _apply_live_overlays(current_ranking, live_features)
     current_ranking = _blend_future_horizon_signals(current_ranking, future_predictions)
+    current_ranking = _enrich_decision_frame(current_ranking)
     current_ranking = current_ranking.merge(
         current_frame[["symbol", "minutes_to_close", "session_return_so_far", "bar_index", "timestamp", "volume"]],
         on="symbol",
@@ -266,6 +306,17 @@ def run_stock_oracle(config: AppConfig) -> ModelOutput:
     metrics["median_future_return_3d"] = float(pd.to_numeric(current_ranking.get("future_return_3d"), errors="coerce").median())
     metrics["median_future_return_5d"] = float(pd.to_numeric(current_ranking.get("future_return_5d"), errors="coerce").median())
     metrics["signal_alignment_rate"] = float((pd.to_numeric(current_ranking.get("direction_alignment"), errors="coerce") > 0).mean())
+    top_slice = current_ranking.head(config.top_k)
+    metrics["top_setup_expected_edge"] = float(pd.to_numeric(top_slice.get("expected_edge"), errors="coerce").mean())
+    metrics["top_setup_reward_risk"] = float(pd.to_numeric(top_slice.get("reward_risk_ratio"), errors="coerce").mean())
+    metrics["top_setup_interval"] = float(pd.to_numeric(top_slice.get("prediction_interval"), errors="coerce").mean())
+    metrics["top_setup_disagreement"] = float(pd.to_numeric(top_slice.get("model_disagreement"), errors="coerce").mean())
+    metrics["breadth_balance"] = float(
+        (
+            float((current_ranking["signal_side"] == "long").sum())
+            - float((current_ranking["signal_side"] == "short").sum())
+        ) / max(len(current_ranking), 1)
+    )
     feature_importance = ranker.feature_importance(active_feature_columns)
     if not future_feature_importance.empty:
         feature_importance = (
